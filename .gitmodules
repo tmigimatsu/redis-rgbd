@@ -1,0 +1,9 @@
+[submodule "libfreenect2"]
+	path = libfreenect2
+	url = ./external/libfreenect2/libfreenect2.git
+[submodule "external/libfreenect2/libfreenect2.git"]
+	path = external/libfreenect2/libfreenect2.git
+	url = https://github.com/OpenKinect/libfreenect2.git
+[submodule "external/ctrl_utils/ctrl-utils.git"]
+	path = external/ctrl_utils/ctrl-utils.git
+	url = https://github.com/tmigimatsu/ctrl-utils.git
