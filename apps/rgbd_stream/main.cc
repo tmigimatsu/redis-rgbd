@@ -39,7 +39,7 @@ Args ParseArgs(int argc, char* argv[]) {
      << "\t\t[-h <redis hostname> (default 127.0.0.1)]" << std::endl
      << "\t\t[-p <redis port> (default 6379)]" << std::endl
      << "\t\t[-a <redis password>]" << std::endl
-     << "\t\t[--prefix <redis key prefix> (default rgbd::camera_0::)]"
+     << "\t\t[--prefix <redis key prefix> (default rgbd::camera_0::)]" << std::endl
      << "\t\t[--fps <fps (0 = realtime, limited by the camera)> (default 0)"
      << std::endl
      << std::endl

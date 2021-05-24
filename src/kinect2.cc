@@ -11,6 +11,7 @@
 
 #include <ctrl_utils/semaphore.h>
 
+#include <atomic>   // std::atomic
 #include <cstring>  // std::memcpy
 #include <libfreenect2/frame_listener.hpp>
 #include <libfreenect2/libfreenect2.hpp>
