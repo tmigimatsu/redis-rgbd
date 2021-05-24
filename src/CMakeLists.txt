@@ -16,6 +16,10 @@ add_library(${LIB_NAME}::${LIB_NAME} ALIAS ${LIB_NAME})
 target_compile_features(${LIB_NAME} PUBLIC cxx_std_17)
 set_target_properties(${LIB_NAME} PROPERTIES CXX_EXTENSIONS OFF)
 
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fconstexpr-steps=21708800")
+endif()
+
 # # Remove doctest code if tests are disabled.
 # if(NOT ${LIB_CMAKE_NAME}_BUILD_TESTING)
 #     target_compile_definitions(${LIB_NAME} PRIVATE DOCTEST_CONFIG_DISABLE)

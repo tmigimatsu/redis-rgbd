@@ -52,19 +52,54 @@ class Camera {
   virtual void SetDepthCallback(std::function<void(cv::Mat)>&& callback) = 0;
 
   /**
-   * Returns a color image.
+   * Gets a color image.
    */
   virtual cv::Mat color_image() const = 0;
 
   /**
-   * Returns a depth image.
+   * Gets a depth image.
    */
   virtual cv::Mat depth_image() const = 0;
 
+  /**
+   * Width of the color image.
+   */
   virtual size_t color_width() const = 0;
+
+  /**
+   * Height of the color image.
+   */
   virtual size_t color_height() const = 0;
+
+  /**
+   * Color intrinsic matrix coefficients [fx, 0, cx, 0, fy, cy, 0, 0, 1].
+   */
+  virtual const std::array<float, 9>& color_intrinsic_matrix() const = 0;
+
+  /**
+   * Color distortion coefficients [k1, k2, p1, p2, k3].
+   */
+  virtual const std::array<float, 5>& color_distortion_coeffs() const = 0;
+
+  /**
+   * Width of the depth image.
+   */
   virtual size_t depth_width() const = 0;
+
+  /**
+   * Height of the depth image.
+   */
   virtual size_t depth_height() const = 0;
+
+  /**
+   * Depth intrinsic matrix coefficients [fx, 0, cx, 0, fy, cy, 0, 0, 1].
+   */
+  virtual const std::array<float, 9>& depth_intrinsic_matrix() const = 0;
+
+  /**
+   * Depth distortion coefficients [k1, k2, p1, p2, k3].
+   */
+  virtual const std::array<float, 5>& depth_distortion_coeffs() const = 0;
 };
 
 }  // namespace redis_rgbd
