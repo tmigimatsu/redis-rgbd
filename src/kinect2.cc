@@ -16,7 +16,8 @@
 #include <libfreenect2/frame_listener.hpp>
 #include <libfreenect2/libfreenect2.hpp>
 #include <opencv2/opencv.hpp>
-#include <thread>  // std::thread
+#include <optional>  // std::optional
+#include <thread>    // std::thread
 
 namespace {
 
@@ -29,6 +30,107 @@ static constexpr size_t kDepthHeight = redis_rgbd::Kinect2::kDepthHeight;
 static constexpr size_t kDepthWidth = redis_rgbd::Kinect2::kDepthWidth;
 static constexpr size_t kDepthBytes =
     kDepthHeight * kDepthWidth * sizeof(float);
+
+static constexpr std::array<float, 9> kColorIntrinsicMatrix =
+    redis_rgbd::Kinect2::kColorIntrinsicMatrix;
+
+static constexpr std::array<float, 9> kDepthIntrinsicMatrix =
+    redis_rgbd::Kinect2::kDepthIntrinsicMatrix;
+
+static constexpr std::array<float, 5> kDepthDistortionCoeffs =
+    redis_rgbd::Kinect2::kDepthDistortionCoeffs;
+
+static constexpr std::array<float, 10> kColorExtrinsicX = {
+    0.000574019,   // x3y0: xxx
+    -2.13737e-07,  // x0y3: yyy
+    4.55302e-05,   // x2y1: xxy
+    0.000468875,   // x1y2: yyx
+    9.54373e-05,   // x2y0: xx
+    0.000142223,   // x0y2: yy
+    0.000370165,   // x1y1: xy
+    0.642408,      // x1y0: x
+    0.00718498,    // x0y1: y
+    0.173172,      // x0y0: 1
+};
+
+static constexpr std::array<float, 10> kColorExtrinsicY = {
+    -1.84482e-05,  // x3y0: xxx
+    0.000785405,   // x0y3: yyy
+    0.000551599,   // x2y1: xxy
+    3.57664e-05,   // x1y2: yyx
+    0.000114572,   // x2y0: xx
+    0.000319694,   // x0y2: yy
+    0.000101136,   // x1y1: xy
+    -0.00717631,   // x1y0: y
+    0.641981,      // x0y1: x
+    -0.0114988,    // x0y0: 1
+};
+
+// From Kinect2 device.
+static constexpr float kShiftM = 52;
+static constexpr float kShiftD = 863;
+
+// From libfreenect2/src/registration.cpp.
+static constexpr float kDepthQ = 0.01;
+static constexpr float kColorQ = 0.002199;
+
+constexpr float ComputeW(float mx, float my, std::array<float, 10> params) {
+  return (mx * mx * mx * std::get<0>(params)) +
+         (my * my * my * std::get<1>(params)) +
+         (mx * mx * my * std::get<2>(params)) +
+         (my * my * mx * std::get<3>(params)) +
+         (mx * mx * std::get<4>(params)) + (my * my * std::get<5>(params)) +
+         (mx * my * std::get<6>(params)) + (mx * std::get<7>(params)) +
+         (my * std::get<8>(params)) + (std::get<9>(params));
+}
+
+using Arr2f = std::array<float, 2>;
+constexpr Arr2f DepthToColor(float x, float y) {
+  const float fx = std::get<0>(kDepthIntrinsicMatrix);
+  const float cx = std::get<2>(kDepthIntrinsicMatrix);
+  const float cy = std::get<5>(kDepthIntrinsicMatrix);
+
+  const float mx = (x - cx) * kDepthQ;
+  const float my = (y - cy) * kDepthQ;
+
+  const float wx = ComputeW(mx, my, kColorExtrinsicX);
+  const float wy = ComputeW(mx, my, kColorExtrinsicY);
+
+  const float rx = (wx / (fx * kColorQ)) - (kShiftM / kShiftD);
+  const float ry = (wy / kColorQ) + cy;
+
+  return {rx, ry};
+}
+
+using DepthMap = std::array<std::array<Arr2f, kDepthHeight>, kDepthWidth>;
+constexpr DepthMap ComputeDepthColorMap() {
+  DepthMap depth_color_map = {0};
+  for (size_t y = 0; y < std::size(depth_color_map); y++) {
+    for (size_t x = 0; x < std::size(depth_color_map[y]); x++) {
+      depth_color_map[y][x] = DepthToColor(x, y);
+    }
+  }
+  return depth_color_map;
+}
+
+static constexpr DepthMap kDepthColorMap = ComputeDepthColorMap();
+
+static std::optional<std::array<int, 2>> DepthToColorIndices(int x_depth,
+                                                             int y_depth,
+                                                             float z) {
+  const float map_y = kDepthColorMap[y_depth][x_depth][1];
+  const int ry_int = map_y + 0.5;
+  if (ry_int < 0 || ry_int >= kColorHeight) return {};
+
+  const float fx = std::get<0>(kColorIntrinsicMatrix);
+  const float cx = std::get<2>(kColorIntrinsicMatrix);
+  const float map_x = kDepthColorMap[y_depth][x_depth][0];
+
+  const float rx = (map_x + (kShiftM / z)) * fx + cx;
+  const int rx_int = rx + 0.5;
+
+  return {{rx_int, ry_int}};
+}
 
 }  // namespace
 
@@ -152,6 +254,33 @@ void Kinect2::SetDepthCallback(std::function<void(cv::Mat)>&& callback) {
 cv::Mat Kinect2::color_image() const { return impl_->color_image(); }
 
 cv::Mat Kinect2::depth_image() const { return impl_->depth_image(); }
+
+void Kinect2::RegisterColorDepth(const cv::Mat& color, const cv::Mat& depth,
+                                 cv::Mat* color_out, cv::Mat* depth_out) {
+  if (depth_out != nullptr) {
+    cv::undistort(depth, *depth_out, kDepthIntrinsicMatrix,
+                  kDepthDistortionCoeffs);
+  }
+
+  if (color_out != nullptr) {
+    for (int y = 0; y < kDepthHeight; y++) {
+      for (int x = 0; x < kDepthWidth; x++) {
+        const std::optional<std::array<int, 2>> xy_color =
+            DepthToColorIndices(x, y, depth.at<float>(y, x));
+        cv::Vec3b& bgr = color_out->at<cv::Vec3b>(y, x);
+        if (!xy_color.has_value()) {
+          bgr[0] = 0;
+          bgr[1] = 0;
+          bgr[2] = 0;
+        } else {
+          const int x_color = std::get<0>(*xy_color);
+          const int y_color = std::get<1>(*xy_color);
+          bgr = color.at<cv::Vec3b>(y_color, x_color);
+        }
+      }
+    }
+  }
+}
 
 /////////////////
 // Kinect2Impl //
@@ -385,7 +514,7 @@ void Kinect2::Kinect2Impl::FrameListener::LockCopy(void* dest, const void* src,
 //   rgb_intrinsic_matrix_ << 1.04557812e+03, 0., 9.58597924e+02, 0.,
 //       1.04691518e+03, 5.40586651e+02, 0., 0., 1.;
 //   rgb_distortion_coeffs_ << 0.03519172, 0.00169421, 0.00131543, -0.0004966,
-//       -0.06287118;
+//   -0.06287118;
 // }
 
 // void Kinect2::RgbCallback(const uint32_t* buffer) {
