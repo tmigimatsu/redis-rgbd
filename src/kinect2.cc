@@ -444,7 +444,7 @@ cv::Mat Kinect2::Kinect2Impl::color_image() {
   cv::cvtColor(img_bgrx_, img_bgr_, cv::COLOR_BGRA2BGR);
 
   // Return a Mat wrapper without copying data.
-  return img_bgrx_;
+  return img_bgr_;
 }
 
 cv::Mat Kinect2::Kinect2Impl::depth_image() {
