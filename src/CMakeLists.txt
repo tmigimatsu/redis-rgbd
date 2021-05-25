@@ -1,9 +1,9 @@
 ############################################################
-# CMakeLists for the symbolic library.
+# CMakeLists for the redis-rgbd library.
 #
-# Copyright 2020. All Rights Reserved.
+# Copyright 2021. All Rights Reserved.
 #
-# Created: May 7, 2020
+# Created: May 24, 2021
 # Authors: Toki Migimatsu
 ############################################################
 
@@ -16,7 +16,9 @@ add_library(${LIB_NAME}::${LIB_NAME} ALIAS ${LIB_NAME})
 target_compile_features(${LIB_NAME} PUBLIC cxx_std_17)
 set_target_properties(${LIB_NAME} PROPERTIES CXX_EXTENSIONS OFF)
 
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fconstexpr-ops-limit=100000000")
+elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fconstexpr-steps=21708800")
 endif()
 
@@ -56,10 +58,10 @@ target_link_libraries(${LIB_NAME}
     ctrl_utils::ctrl_utils
 )
 
-# # Build python wrapper.
-# if(${LIB_CMAKE_NAME}_BUILD_PYTHON)
-#     add_subdirectory(python)
-# endif()
+# Build python wrapper.
+if(${LIB_CMAKE_NAME}_BUILD_PYTHON)
+    add_subdirectory(python)
+endif()
 
 # Install the library.
 install(TARGETS ${LIB_NAME}

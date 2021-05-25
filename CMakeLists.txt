@@ -37,9 +37,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # # Define CMake options.
 # lib_option(BUILD_DOCS "Build docs." OFF)
 # lib_option(BUILD_EXAMPLES "Build examples." ON)
-# lib_option(BUILD_PYTHON "Build Python library." ON)
+lib_option(BUILD_PYTHON "Build Python library." ON)
 # lib_option(BUILD_TESTING "Build tests." OFF)
-# lib_option(CLANG_TIDY "Perform clang-tidy checks." OFF)
+lib_option(CLANG_TIDY "Perform clang-tidy checks." OFF)
 
 # Set default build type to release.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

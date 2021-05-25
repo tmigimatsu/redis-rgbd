@@ -72,9 +72,9 @@ class Camera {
   virtual size_t color_height() const = 0;
 
   /**
-   * Color intrinsic matrix coefficients [fx, 0, cx, 0, fy, cy, 0, 0, 1].
+   * Color intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].
    */
-  virtual const std::array<float, 9>& color_intrinsic_matrix() const = 0;
+  virtual const cv::Mat& color_intrinsic_matrix() const = 0;
 
   /**
    * Color distortion coefficients [k1, k2, p1, p2, k3].
@@ -92,9 +92,9 @@ class Camera {
   virtual size_t depth_height() const = 0;
 
   /**
-   * Depth intrinsic matrix coefficients [fx, 0, cx, 0, fy, cy, 0, 0, 1].
+   * Depth intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].
    */
-  virtual const std::array<float, 9>& depth_intrinsic_matrix() const = 0;
+  virtual const cv::Mat& depth_intrinsic_matrix() const = 0;
 
   /**
    * Depth distortion coefficients [k1, k2, p1, p2, k3].

@@ -3,18 +3,16 @@
 #
 # Copyright 2021. All Rights Reserved.
 #
-# Created: May 20, 2020
+# Created: May 24, 2020
 # Authors: Toki Migimatsu
 ############################################################
 
-# message(STATUS "Configuring ${PROJECT_NAME} examples.")
+add_executable(rgbd_listen main.cc)
 
-add_executable(rgbd_stream main.cc)
+target_compile_features(rgbd_listen PUBLIC cxx_std_17)
+set_target_properties(rgbd_listen PROPERTIES CXX_EXTENSIONS OFF)
 
-target_compile_features(rgbd_stream PUBLIC cxx_std_17)
-set_target_properties(rgbd_stream PROPERTIES CXX_EXTENSIONS OFF)
-
-target_link_libraries(rgbd_stream
+target_link_libraries(rgbd_listen
   PRIVATE
     ctrl_utils::ctrl_utils
     cpp_redis::cpp_redis
@@ -22,5 +20,5 @@ target_link_libraries(rgbd_stream
 )
 
 if(SYMBOLIC_CLANG_TIDY)
-    target_enable_clang_tidy(rgbd_stream)
+    target_enable_clang_tidy(rgbd_listen)
 endif()

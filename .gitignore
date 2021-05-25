@@ -1,5 +1,9 @@
 bin/
 build/
+build_*/
 lib/
 
 .cache/
+*.egg-info/
+
+*.so

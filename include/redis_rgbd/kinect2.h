@@ -146,10 +146,12 @@ class Kinect2 : public Camera {
   virtual size_t color_height() const override { return kColorHeight; }
 
   /**
-   * Color intrinsic matrix coefficients [fx, 0, cx, 0, fy, cy, 0, 0, 1].
+   * Color intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].
    */
-  virtual const std::array<float, 9>& color_intrinsic_matrix() const override {
-    return kColorIntrinsicMatrix;
+  virtual const cv::Mat& color_intrinsic_matrix() const override {
+    static const cv::Mat matrix(
+        3, 3, CV_32FC1, const_cast<float*>(kColorIntrinsicMatrix.data()));
+    return matrix;
   };
 
   /**
@@ -170,10 +172,12 @@ class Kinect2 : public Camera {
   virtual size_t depth_height() const override { return kDepthHeight; }
 
   /**
-   * Depth intrinsic matrix coefficients [fx, 0, cx, 0, fy, cy, 0, 0, 1].
+   * Depth intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].
    */
-  virtual const std::array<float, 9>& depth_intrinsic_matrix() const override {
-    return kDepthIntrinsicMatrix;
+  virtual const cv::Mat& depth_intrinsic_matrix() const override {
+    static const cv::Mat matrix(
+        3, 3, CV_32FC1, const_cast<float*>(kDepthIntrinsicMatrix.data()));
+    return matrix;
   };
 
   /**
@@ -184,62 +188,38 @@ class Kinect2 : public Camera {
   };
 
   /**
-   * Undistort the depth image and register the color image with it.
+   * Registers the color image to the depth image.
    *
    * @param color 1920 x 1080 uint8 BGR image.
    * @param depth 512 x 424 float32 depth image.
-   * @param color_out 512 x 424 uint8 registered BGR image (if not null).
-   * @param depth_out 512 x 424 float32 undistorted depth image (if not null).
+   * @param color_out 512 x 424 uint8 registered BGR image.
    */
-  static void RegisterColorDepth(const cv::Mat& color, const cv::Mat& depth,
-                                 cv::Mat* color_out = nullptr,
-                                 cv::Mat* depth_out = nullptr);
+  static void RegisterColorToDepth(const cv::Mat& color, const cv::Mat& depth,
+                                   cv::Mat& color_out);
+
+  /**
+   * Registers the depth image to the color image.
+   *
+   * @param depth 512 x 424 float32 depth image.
+   * @param color 1920 x 1080 uint8 BGR image.
+   * @param depth_out 1920 x 1080 float32 registered depth image.
+   */
+  static void RegisterDepthToColor(const cv::Mat& depth, const cv::Mat& color,
+                                   cv::Mat& depth_out);
+
+  /**
+   * Filters out noise in the depth image using a box filter.
+   *
+   * @param depth_reg 1920 x 1080 float32 registered depth image computed with
+   *                  `Kinect2::RegisterDepthToColor()`.
+   * @param depth 512 x 424 float32 depth image to be filtered in place.
+   */
+  static void FilterDepth(const cv::Mat& depth_reg, cv::Mat& depth);
 
  private:
   class Kinect2Impl;
   std::unique_ptr<Kinect2Impl> impl_;
 };
-
-// protected : class FrameListener : public libfreenect2::FrameListener {
-//  public:
-//   virtual bool onNewFrame(libfreenect2::Frame::Type type,
-//                           libfreenect2::Frame* frame) override;
-
-//   std::function<void(const uint32_t*)> rgb_callback_;
-//   std::function<void(const float*)> depth_callback_;
-
-//   std::unique_ptr<libfreenect2::Frame> frame_color_;
-//   std::unique_ptr<libfreenect2::Frame> frame_depth_undistorted_;
-//   std::unique_ptr<libfreenect2::Frame> frame_color_registered_;
-//   std::unique_ptr<libfreenect2::Frame> frame_depth_big_;
-
-//   std::unique_ptr<libfreenect2::Registration> registration_;
-// };
-
-// void RgbCallback(const uint32_t* buffer);
-
-// void DepthCallback(const float* buffer);
-
-// libfreenect2::Freenect2 freenect_;
-// libfreenect2::Freenect2Device* dev_;
-// FrameListener listener_;
-
-// std::mutex mtx_rgb_;
-// std::vector<uint8_t> buffer_rgb_ = std::vector<uint8_t>(3 * kSizeRgb);
-// std::unique_ptr<std::promise<cv::Mat>> promise_rgb_;
-
-// std::mutex mtx_depth_;
-// std::vector<float> buffer_depth_ = std::vector<float>(kSizeDepth);
-// std::vector<float> buffer_depth_big_ = std::vector<float>(kSizeRgb);
-// std::unique_ptr<std::promise<cv::Mat>> promise_depth_;
-
-// std::pair<cv::Mat, cv::Mat> distortion_maps_;
-
-// bool rgb_;
-// bool depth_;
-
-// ctrl_utils::RedisClient redis_;
-// };
 
 }  // namespace redis_rgbd
 

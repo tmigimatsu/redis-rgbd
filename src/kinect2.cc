@@ -15,6 +15,7 @@
 #include <cstring>  // std::memcpy
 #include <libfreenect2/frame_listener.hpp>
 #include <libfreenect2/libfreenect2.hpp>
+#include <numeric>  // std::isfinite
 #include <opencv2/opencv.hpp>
 #include <optional>  // std::optional
 #include <thread>    // std::thread
@@ -74,7 +75,12 @@ static constexpr float kShiftD = 863;
 static constexpr float kDepthQ = 0.01;
 static constexpr float kColorQ = 0.002199;
 
-constexpr float ComputeW(float mx, float my, std::array<float, 10> params) {
+static constexpr int kFilterWidthHalf = 2;
+static constexpr int kFilterHeightHalf = 1;
+static constexpr float kFilterTolerance = 0.01;
+
+constexpr float ComputeW(float mx, float my,
+                         const std::array<float, 10>& params) {
   return (mx * mx * mx * std::get<0>(params)) +
          (my * my * my * std::get<1>(params)) +
          (mx * mx * my * std::get<2>(params)) +
@@ -86,27 +92,29 @@ constexpr float ComputeW(float mx, float my, std::array<float, 10> params) {
 
 using Arr2f = std::array<float, 2>;
 constexpr Arr2f DepthToColor(float x, float y) {
-  const float fx = std::get<0>(kDepthIntrinsicMatrix);
-  const float cx = std::get<2>(kDepthIntrinsicMatrix);
-  const float cy = std::get<5>(kDepthIntrinsicMatrix);
+  const float depth_cx = std::get<2>(kDepthIntrinsicMatrix);
+  const float depth_cy = std::get<5>(kDepthIntrinsicMatrix);
 
-  const float mx = (x - cx) * kDepthQ;
-  const float my = (y - cy) * kDepthQ;
+  const float mx = (x - depth_cx) * kDepthQ;
+  const float my = (y - depth_cy) * kDepthQ;
 
   const float wx = ComputeW(mx, my, kColorExtrinsicX);
   const float wy = ComputeW(mx, my, kColorExtrinsicY);
 
-  const float rx = (wx / (fx * kColorQ)) - (kShiftM / kShiftD);
-  const float ry = (wy / kColorQ) + cy;
+  const float color_fx = std::get<0>(kColorIntrinsicMatrix);
+  const float color_cy = std::get<5>(kColorIntrinsicMatrix);
+
+  const float rx = (wx / (color_fx * kColorQ)) - (kShiftM / kShiftD);
+  const float ry = (wy / kColorQ) + color_cy;
 
   return {rx, ry};
 }
 
-using DepthMap = std::array<std::array<Arr2f, kDepthHeight>, kDepthWidth>;
+using DepthMap = std::array<std::array<Arr2f, kDepthWidth>, kDepthHeight>;
 constexpr DepthMap ComputeDepthColorMap() {
   DepthMap depth_color_map = {0};
-  for (size_t y = 0; y < std::size(depth_color_map); y++) {
-    for (size_t x = 0; x < std::size(depth_color_map[y]); x++) {
+  for (size_t y = 0; y < kDepthHeight; y++) {
+    for (size_t x = 0; x < kDepthWidth; x++) {
       depth_color_map[y][x] = DepthToColor(x, y);
     }
   }
@@ -118,16 +126,20 @@ static constexpr DepthMap kDepthColorMap = ComputeDepthColorMap();
 static std::optional<std::array<int, 2>> DepthToColorIndices(int x_depth,
                                                              int y_depth,
                                                              float z) {
+  if (z <= 0 || !std::isfinite(z)) return {};
+
+  const float map_x = kDepthColorMap[y_depth][x_depth][0];
   const float map_y = kDepthColorMap[y_depth][x_depth][1];
+
   const int ry_int = map_y + 0.5;
   if (ry_int < 0 || ry_int >= kColorHeight) return {};
 
   const float fx = std::get<0>(kColorIntrinsicMatrix);
   const float cx = std::get<2>(kColorIntrinsicMatrix);
-  const float map_x = kDepthColorMap[y_depth][x_depth][0];
 
   const float rx = (map_x + (kShiftM / z)) * fx + cx;
   const int rx_int = rx + 0.5;
+  assert(rx_int >= 0 && rx_int < kColorWidth);
 
   return {{rx_int, ry_int}};
 }
@@ -255,29 +267,100 @@ cv::Mat Kinect2::color_image() const { return impl_->color_image(); }
 
 cv::Mat Kinect2::depth_image() const { return impl_->depth_image(); }
 
-void Kinect2::RegisterColorDepth(const cv::Mat& color, const cv::Mat& depth,
-                                 cv::Mat* color_out, cv::Mat* depth_out) {
-  if (depth_out != nullptr) {
-    cv::undistort(depth, *depth_out, kDepthIntrinsicMatrix,
-                  kDepthDistortionCoeffs);
+void Kinect2::RegisterColorToDepth(const cv::Mat& color, const cv::Mat& depth,
+                                   cv::Mat& color_out) {
+  // Check output size.
+  if (color_out.rows != kDepthHeight || color_out.cols != kDepthWidth ||
+      color_out.type() != CV_8UC3) {
+    std::stringstream ss;
+    ss << "Kinect2::RegisterColorToDepth(): color_out must be preallocated "
+          "with size ["
+       << kDepthHeight << ", " << kDepthWidth << "] and type CV_8UC3."
+       << std::endl;
+    std::invalid_argument(ss.str());
   }
 
-  if (color_out != nullptr) {
-    for (int y = 0; y < kDepthHeight; y++) {
-      for (int x = 0; x < kDepthWidth; x++) {
-        const std::optional<std::array<int, 2>> xy_color =
-            DepthToColorIndices(x, y, depth.at<float>(y, x));
-        cv::Vec3b& bgr = color_out->at<cv::Vec3b>(y, x);
-        if (!xy_color.has_value()) {
-          bgr[0] = 0;
-          bgr[1] = 0;
-          bgr[2] = 0;
-        } else {
-          const int x_color = std::get<0>(*xy_color);
-          const int y_color = std::get<1>(*xy_color);
-          bgr = color.at<cv::Vec3b>(y_color, x_color);
+  // Iterate over depth image.
+  for (int y = 0; y < kDepthHeight; y++) {
+    for (int x = 0; x < kDepthWidth; x++) {
+      // Get corresponding color coordinates.
+      const std::optional<std::array<int, 2>> xy_color =
+          DepthToColorIndices(x, y, depth.at<float>(y, x));
+
+      // Set output color pixel.
+      cv::Vec3b& bgr = color_out.at<cv::Vec3b>(y, x);
+      if (!xy_color.has_value()) {
+        std::fill(std::begin(bgr.val), std::end(bgr.val), 0);
+      } else {
+        const std::array<int, 2>& xy = *xy_color;
+        bgr = color.at<cv::Vec3b>(xy[1], xy[0]);
+      }
+    }
+  }
+}
+
+void Kinect2::RegisterDepthToColor(const cv::Mat& depth, const cv::Mat& color,
+                                   cv::Mat& depth_out) {
+  // Check output size.
+  if (depth_out.rows != kColorHeight || depth_out.cols != kColorWidth ||
+      depth_out.type() != CV_32FC1) {
+    std::stringstream ss;
+    ss << "Kinect2::RegisterDepthToColor(): depth_out must be preallocated "
+          "with size ["
+       << kColorHeight << ", " << kColorWidth << "] and type CV_32FC1."
+       << std::endl;
+    std::invalid_argument(ss.str());
+  }
+
+  // Clear output image.
+  depth_out.setTo(0);
+
+  // Iterate over depth image.
+  for (int y = 0; y < kDepthHeight; y++) {
+    for (int x = 0; x < kDepthWidth; x++) {
+      // Get corresponding color coordinates.
+      const float z = depth.at<float>(y, x);
+      const std::optional<std::array<int, 2>> xy_color =
+          DepthToColorIndices(x, y, z);
+
+      if (!xy_color.has_value()) continue;
+
+      // Min box filter over color image.
+      for (int yy = -kFilterHeightHalf; yy <= kFilterHeightHalf; yy++) {
+        const int y_color = (*xy_color)[1] + yy;
+        if (y_color < 0 || y_color >= kColorHeight) continue;
+
+        for (int xx = -kFilterWidthHalf; xx <= kFilterWidthHalf; xx++) {
+          const int x_color = (*xy_color)[0] + xx;
+          assert(x_color > 0 && x_color < kColorWidth);
+
+          // Set output pixel value to min z in window.
+          float& zz = depth_out.at<float>(y_color, x_color);
+          if (z < zz || zz == 0) zz = z;
         }
       }
+    }
+  }
+}
+
+void Kinect2::FilterDepth(const cv::Mat& depth_reg, cv::Mat& depth) {
+  // Iterate over depth image.
+  for (int y = 0; y < kDepthHeight; y++) {
+    for (int x = 0; x < kDepthWidth; x++) {
+      // Get corresponding color coordinates.
+      float& z = depth.at<float>(y, x);
+      const std::optional<std::array<int, 2>> xy_color =
+          DepthToColorIndices(x, y, z);
+
+      if (!xy_color.has_value()) continue;
+
+      // Filter out noise larger than tolerance.
+      const std::array<int, 2>& xy = *xy_color;
+      const float z_min = depth_reg.at<float>(xy[1], xy[0]);
+      const float error = (z - z_min) / z;
+      if (error <= kFilterTolerance) continue;
+
+      z = 0;
     }
   }
 }
@@ -414,181 +497,5 @@ void Kinect2::Kinect2Impl::FrameListener::LockCopy(void* dest, const void* src,
   std::lock_guard<std::mutex> lock(mtx);
   std::memcpy(dest, src, bytes);
 }
-
-// const auto depth_params = dev_->getIrCameraParams();
-// const auto color_params = dev_->getColorCameraParams();
-// listener_.registration_ =
-//     std::make_unique<libfreenect2::Registration>(depth_params,
-//     color_params);
-
-// // Get depth parameters
-// depth_intrinsic_matrix_ << depth_params.fx, 0., depth_params.cx, 0.,
-//     depth_params.fy, depth_params.cy, 0., 0., 1.;
-// depth_distortion_coeffs_ << depth_params.k1, depth_params.k2,
-// depth_params.p1,
-//     depth_params.p2, depth_params.k3;
-
-// // Get color parameters
-// rgb_intrinsic_matrix_ << color_params.fx, 0., color_params.cx, 0.,
-//     color_params.fy, color_params.cy, 0., 0., 1.;
-// // rgb_distortion_coeffs_.setZero();
-
-// cv::Mat depth_distortion =
-//     cv::Mat(1, 5, CV_64F, depth_distortion_coeffs_.data());
-// cv::Mat depth_intrinsic =
-//     cv::Mat(3, 3, CV_64F, depth_intrinsic_matrix_.data());
-// cv::initUndistortRectifyMap(depth_intrinsic, depth_distortion, cv::Mat(),
-//                             depth_intrinsic,
-//                             cv::Size(kWidthDepth, kHeightDepth), CV_32FC1,
-//                             distortion_maps_.first,
-//                             distortion_maps_.second);
-
-// bool Kinect2::FrameListener::onNewFrame(libfreenect2::Frame::Type type,
-//                                         libfreenect2::Frame* frame) {
-//   switch (type) {
-//     case libfreenect2::Frame::Type::Color: {
-//       std::lock_guard<std::mutex> lock(mtx_bgrx_);
-//       std::memcpy(buffer_bgrx_.data(), frame->data, sizeof(buffer_bgrx_));
-//     } break;
-//     case libfreenect2::Frame::Type::Depth: {
-//       std::lock_guard<std::mutex> lock(mtx_depth_);
-//       std::memcpy(buffer_depth_.data(), frame->data, sizeof(buffer_depth_));
-//     } break;
-//     default:
-//       break;
-//   }
-//   // if (type == libfreenect2::Frame::Type::Color) {
-//   //   const size_t num_bytes = frame_color_->width * frame_color_->height *
-//   //                            frame_color_->bytes_per_pixel;
-//   //   std::memcpy(frame_color_->data, frame->data, num_bytes);
-//   //   rgb_callback_(reinterpret_cast<const uint32_t*>(frame->data));
-//   // } else if (type == libfreenect2::Frame::Type::Depth) {
-//   //   // registration_->undistortDepth(frame,
-//   //   frame_depth_undistorted_.get()); cv::Mat img_depth(kHeightDepth,
-//   //   kWidthDepth, CV_32FC1, frame->data); cv::medianBlur(img_depth,
-//   //   img_depth, 5); registration_->apply(
-//   //       frame_color_.get(), frame, frame_depth_undistorted_.get(),
-//   //       frame_color_registered_.get(), true, frame_depth_big_.get());
-//   //   depth_callback_(reinterpret_cast<const float*>(frame->data));
-//   // }
-
-//   // Return false to let libfreenect2 manage frame memory.
-//   return false;
-// }
-
-// Kinect2::Kinect2() {
-//   listener_.frame_color_ =
-//       std::make_unique<libfreenect2::Frame>(rgb_width(), rgb_height(), 4);
-//   listener_.frame_color_->format = libfreenect2::Frame::Format::BGRX;
-//   listener_.frame_depth_undistorted_ =
-//       std::make_unique<libfreenect2::Frame>(depth_width(), depth_height(),
-//       4);
-//   listener_.frame_depth_undistorted_->format =
-//       libfreenect2::Frame::Format::Float;
-//   listener_.frame_color_registered_ =
-//       std::make_unique<libfreenect2::Frame>(depth_width(), depth_height(),
-//       4);
-//   listener_.frame_color_registered_->format =
-//   libfreenect2::Frame::Format::BGRX; listener_.frame_depth_big_ =
-//       std::make_unique<libfreenect2::Frame>(rgb_width(), rgb_height() + 2,
-//       4);
-//   listener_.frame_depth_big_->format = libfreenect2::Frame::Format::Float;
-
-//   listener_.rgb_callback_ = [this](const uint32_t* buffer) {
-//     RgbCallback(buffer);
-//   };
-//   listener_.depth_callback_ = [this](const float* buffer) {
-//     DepthCallback(buffer);
-//   };
-
-//   // Pulled from iai_kinect in ROS
-//   depth_intrinsic_matrix_ << 3.6816072569315202e+02,
-//   0., 2.4594416950015150e+02,
-//       0., 3.6774098375548385e+02, 2.0405583803178158e+02, 0., 0., 1.;
-//   depth_distortion_coeffs_ << 1.2784611385723821e-01,
-//   -3.5757964278106197e-01,
-//       -1.1644394534547308e-03,
-//       -2.6300044551231176e-03, 1.6759244215113878e-01;
-
-//   // Calibrated 09/04/19
-//   rgb_intrinsic_matrix_ << 1.04557812e+03, 0., 9.58597924e+02, 0.,
-//       1.04691518e+03, 5.40586651e+02, 0., 0., 1.;
-//   rgb_distortion_coeffs_ << 0.03519172, 0.00169421, 0.00131543, -0.0004966,
-//   -0.06287118;
-// }
-
-// void Kinect2::RgbCallback(const uint32_t* buffer) {
-//   std::lock_guard<std::mutex> lock(mtx_rgb_);
-//   if (!promise_rgb_) return;
-
-//   // Copy data
-//   for (size_t y = 0; y < kHeightRgb; y++) {
-//     for (size_t x = 0; x < kWidthRgb; x++) {
-//       // Flip about vertical axis
-//       const size_t i = y * kWidthRgb + x;
-//       const size_t i_flipped = y * kWidthRgb + (kWidthRgb - 1) - x;
-//       const uint8_t* buffer_i = reinterpret_cast<const uint8_t*>(buffer + i);
-//       uint8_t* buffer_rgb_i = buffer_rgb_.data() + 3 * i_flipped;
-//       std::memcpy(buffer_rgb_i, buffer_i, 3);
-//     }
-//   }
-
-//   // Set future
-//   promise_rgb_->set_value(
-//       cv::Mat(kHeightRgb, kWidthRgb, CV_8UC3, buffer_rgb_.data()));
-//   promise_rgb_.reset();
-// }
-
-// void Kinect2::DepthCallback(const float* buffer) {
-//   std::lock_guard<std::mutex> lock(mtx_depth_);
-//   if (!promise_depth_) return;
-
-//   // cv::Mat depth_undistorted = cv::Mat(kHeightDepth, kWidthDepth, CV_32FC1,
-//   // reinterpret_cast<float*>(listener_.frame_depth_undistorted_->data));
-//   // cv::Mat depth_raw = cv::Mat(kHeightDepth, kWidthDepth, CV_32FC1,
-//   // const_cast<float*>(buffer)); cv::Mat depth_registered =
-//   // cv::Mat(kHeightDepth, kWidthDepth, CV_32FC1, buffer_depth_.data());
-//   // cv::flip(depth_undistorted, depth_registered, 1);
-//   // depth_registered *= 0.001;
-
-//   cv::Mat depth_big_raw(
-//       rgb_height(), rgb_width(), CV_32FC1,
-//       listener_.frame_depth_big_->data + sizeof(float) * rgb_width());
-//   cv::Mat depth_big_registered(rgb_height(), rgb_width(), CV_32FC1,
-//                                buffer_depth_big_.data());
-//   for (size_t y = 0; y < kHeightRgb; y++) {
-//     for (size_t x = 0; x < kWidthRgb; x++) {
-//       const float d_raw = depth_big_raw.at<float>(y, x);
-//       float& d_out = depth_big_registered.at<float>(y, kWidthRgb - 1 - x);
-//       d_out = (d_raw >= 2000. || d_raw <= 500. || std::isnan(d_raw))
-//                   ? std::nan("")
-//                   : 0.001 * d_raw;
-//     }
-//   }
-//   // cv::flip(depth_big_raw, depth_big_registered, 1);
-//   // depth_big_registered *= 0.001;
-//   // static cv::Mat depth_flipped = cv::Mat(kHeightDepth, kWidthDepth,
-//   // CV_32FC1);
-
-//   // cv::Mat depth_raw = cv::Mat(kHeightDepth, kWidthDepth, CV_32FC1,
-//   // const_cast<float*>(buffer)); cv::flip(depth_raw, depth_flipped, 1);
-//   // // depth_flipped -= 2.0119255597912145;
-
-//   // cv::Mat depth_registered = cv::Mat(kHeightDepth, kWidthDepth, CV_32FC1,
-//   // buffer_depth_.data()); cv::remap(depth_flipped, depth_registered,
-//   // distortion_maps_.first, distortion_maps_.second, cv::INTER_NEAREST);
-//   // depth_registered *= 0.001;
-
-//   // Set future
-//   // TODO: Fix race condition where user accesses buffer_rgb_ while this
-//   // callback writes to it promise_depth_->set_value(depth_registered);
-//   promise_depth_->set_value(depth_big_registered);
-//   promise_depth_.reset();
-// }
-
-// cv::Mat Kinect2::depth_big() {
-//   return cv::Mat(rgb_height() / 2, rgb_width() / 2, CV_32FC1,
-//                  buffer_depth_big_.data());
-// }
 
 }  // namespace redis_rgbd
