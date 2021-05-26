@@ -11,14 +11,17 @@
 
 #include <ctrl_utils/semaphore.h>
 
-#include <atomic>   // std::atomic
-#include <cstring>  // std::memcpy
+#include <algorithm>  // std::swap
+#include <array>      // std::array
+#include <csignal>    // std::sig_atomic_t
+#include <cstring>    // std::memcpy
 #include <libfreenect2/frame_listener.hpp>
 #include <libfreenect2/libfreenect2.hpp>
 #include <numeric>  // std::isfinite
 #include <opencv2/opencv.hpp>
 #include <optional>  // std::optional
 #include <thread>    // std::thread
+#include <vector>    // std::vector
 
 namespace {
 
@@ -175,7 +178,13 @@ class Kinect2::Kinect2Impl {
  private:
   class FrameListener : public libfreenect2::FrameListener {
    public:
-    FrameListener() : sem_color_callback(0), sem_depth_callback(0) {}
+    FrameListener()
+        : sem_color_callback(0),
+          sem_depth_callback(0),
+          buffer_bgrx_kinect_(kColorWidth * kColorHeight),
+          buffer_bgrx_(kColorWidth * kColorHeight),
+          buffer_depth_kinect_(kDepthWidth * kDepthHeight),
+          buffer_depth_(kDepthWidth * kDepthHeight) {}
 
     /**
      * Copies image data from libfreenect2 to a local buffer.
@@ -187,14 +196,27 @@ class Kinect2::Kinect2Impl {
                             libfreenect2::Frame* frame) override;
 
     /**
-     * Populates (and resizes) the given image with the latest color frame.
+     * Terminates the Kinect2 thread.
      */
-    void GetBgrxFrame(cv::Mat& img);
+    void Terminate() {
+      is_running_ = false;
+      sem_color_callback.release();
+      sem_depth_callback.release();
+    }
 
     /**
-     * Populates (and resizes) the given image with the latest depth frame.
+     * Populates buffer_bgrx with the latest color frame.
+     *
+     * Vector can be modified by the user until the next call to this function.
      */
-    void GetDepthFrame(cv::Mat& img);
+    std::vector<uint32_t>& GetBgrxFrame();
+
+    /**
+     * Populates buffer_depth with the latest depth frame.
+     *
+     * Vector can be modified by the user until the next call to this function.
+     */
+    std::vector<float>& GetDepthFrame();
 
     /**
      * Condition variable notified when new color frame is received.
@@ -211,13 +233,21 @@ class Kinect2::Kinect2Impl {
     static void LockCopy(void* dest, const void* src, size_t bytes,
                          std::mutex& mtx);
 
-    // Color frame buffer populated by Kinect.
-    std::array<uint32_t, kColorWidth * kColorHeight> buffer_bgrx_;
+    // Color frame buffer populated by Kinect in `onNewFrame()`.
+    std::vector<uint32_t> buffer_bgrx_kinect_;
     std::mutex mtx_bgrx_;
 
-    // Depth frame buffer populated by Kinect.
-    std::array<float, kDepthWidth * kDepthHeight> buffer_depth_;
+    // Public-facing color frame buffer populated by user in `GetBgrxFrame()`.
+    std::vector<uint32_t> buffer_bgrx_;
+
+    // Depth frame buffer populated by Kinect in `onNewFrame()`.
+    std::vector<float> buffer_depth_kinect_;
     std::mutex mtx_depth_;
+
+    // Public-facing depth frame buffer populated by user in `GetDepthFrame()`.
+    std::vector<float> buffer_depth_;
+
+    std::sig_atomic_t is_running_ = true;
   };
 
   libfreenect2::Freenect2 freenect_;
@@ -225,14 +255,12 @@ class Kinect2::Kinect2Impl {
   libfreenect2::Freenect2Device* dev_ = nullptr;
 
   // Boolean flag to stop callback threads.
-  std::atomic<bool> is_running_;
+  std::sig_atomic_t is_running_;
 
   std::thread thread_color_callback_;
   std::thread thread_depth_callback_;
 
   cv::Mat img_bgr_;
-  cv::Mat img_bgrx_;
-  cv::Mat img_depth_;
 };
 
 /////////////
@@ -400,9 +428,8 @@ void Kinect2::Kinect2Impl::Start(bool color, bool depth) {
 
 void Kinect2::Kinect2Impl::Stop() {
   is_running_ = false;
+  listener_.Terminate();
   dev_->stop();
-  listener_.sem_color_callback.release();
-  listener_.sem_depth_callback.release();
   if (thread_color_callback_.joinable()) {
     thread_color_callback_.join();
   }
@@ -440,18 +467,20 @@ void Kinect2::Kinect2Impl::SetDepthCallback(
 }
 
 cv::Mat Kinect2::Kinect2Impl::color_image() {
-  listener_.GetBgrxFrame(img_bgrx_);
-  cv::cvtColor(img_bgrx_, img_bgr_, cv::COLOR_BGRA2BGR);
+  std::vector<uint32_t>& buffer_bgrx = listener_.GetBgrxFrame();
+  cv::Mat img_bgrx(kColorHeight, kColorWidth, CV_8UC4, buffer_bgrx.data());
+  cv::cvtColor(img_bgrx, img_bgr_, cv::COLOR_BGRA2BGR);
 
   // Return a Mat wrapper without copying data.
   return img_bgr_;
 }
 
 cv::Mat Kinect2::Kinect2Impl::depth_image() {
-  listener_.GetDepthFrame(img_depth_);
+  std::vector<float>& buffer_depth = listener_.GetDepthFrame();
+  cv::Mat img_depth(kDepthHeight, kDepthWidth, CV_32FC1, buffer_depth.data());
 
   // Return a Mat wrapper without copying data.
-  return img_depth_;
+  return img_depth;
 }
 
 ///////////////////
@@ -460,35 +489,36 @@ cv::Mat Kinect2::Kinect2Impl::depth_image() {
 
 bool Kinect2::Kinect2Impl::FrameListener::onNewFrame(
     libfreenect2::Frame::Type type, libfreenect2::Frame* frame) {
+  if (!is_running_) return false;
+
   switch (type) {
     case libfreenect2::Frame::Type::Color:
-      LockCopy(buffer_bgrx_.data(), frame->data, kColorBytes, mtx_bgrx_);
+      LockCopy(buffer_bgrx_kinect_.data(), frame->data, kColorBytes, mtx_bgrx_);
       sem_color_callback.release();
       break;
     case libfreenect2::Frame::Type::Depth:
-      LockCopy(buffer_depth_.data(), frame->data, kDepthBytes, mtx_depth_);
+      LockCopy(buffer_depth_kinect_.data(), frame->data, kDepthBytes,
+               mtx_depth_);
       sem_depth_callback.release();
       break;
     default:
       break;
   }
 
-  // Return false to let libfreenect2 reuse the frame.
+  // Return false to let libfreenect2 manage the frame.
   return false;
 }
 
-void Kinect2::Kinect2Impl::FrameListener::GetBgrxFrame(cv::Mat& img) {
-  if (img.elemSize() != kColorBytes) {
-    img = cv::Mat(kColorHeight, kColorWidth, CV_8UC4);
-  }
-  LockCopy(img.data, buffer_bgrx_.data(), kColorBytes, mtx_bgrx_);
+std::vector<uint32_t>& Kinect2::Kinect2Impl::FrameListener::GetBgrxFrame() {
+  std::lock_guard<std::mutex> lock(mtx_bgrx_);
+  std::swap(buffer_bgrx_, buffer_bgrx_kinect_);
+  return buffer_bgrx_;
 };
 
-void Kinect2::Kinect2Impl::FrameListener::GetDepthFrame(cv::Mat& img) {
-  if (img.elemSize() != kDepthBytes) {
-    img = cv::Mat(kDepthHeight, kDepthWidth, CV_32FC1);
-  }
-  LockCopy(img.data, buffer_depth_.data(), kDepthBytes, mtx_depth_);
+std::vector<float>& Kinect2::Kinect2Impl::FrameListener::GetDepthFrame() {
+  std::lock_guard<std::mutex> lock(mtx_depth_);
+  std::swap(buffer_depth_, buffer_depth_kinect_);
+  return buffer_depth_;
 };
 
 void Kinect2::Kinect2Impl::FrameListener::LockCopy(void* dest, const void* src,

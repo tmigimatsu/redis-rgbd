@@ -126,12 +126,12 @@ class Kinect2 : public Camera {
       std::function<void(cv::Mat)>&& callback) override;
 
   /**
-   * Gets a color frame as a uint8 BGR image.
+   * Gets a color frame as a uint8 BGR image. This image can be modified.
    */
   virtual cv::Mat color_image() const override;
 
   /**
-   * Gets a depth frame as a float32 depth image.
+   * Gets a depth frame as a float32 depth image. This image can be modified.
    */
   virtual cv::Mat depth_image() const override;
 
