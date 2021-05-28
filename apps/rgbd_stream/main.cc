@@ -29,34 +29,35 @@ struct Args : ctrl_utils::Args {
   explicit Args(ctrl_utils::Args&& args) : ctrl_utils::Args(std::move(args)) {}
 
   std::string camera =
-      Arg<std::string>("camera", "kinect, kinect2, or realsense");
+      Arg<std::string>("camera", "One of {kinect, kinect2, realsense}.");
 
-  std::string serial = Kwarg<std::string>("serial", "", "Camera serial");
+  std::string serial =
+      Kwarg<std::string>("serial", "", "Camera serial number.");
 
   std::string redis_host =
-      Kwarg<std::string>("h,redis-host", "127.0.0.1", "Redis hostname");
+      Kwarg<std::string>("h,redis-host", "127.0.0.1", "Redis hostname.");
 
-  int redis_port = Kwarg<int>("p,redis-port", 6379, "Redis port");
+  int redis_port = Kwarg<int>("p,redis-port", 6379, "Redis port.");
 
   std::string redis_pass =
-      Kwarg<std::string>("a,redis-pass", "", "Redis password");
+      Kwarg<std::string>("a,redis-pass", "", "Redis password.");
 
   std::string key_prefix =
-      Kwarg<std::string>("prefix", "rgbd::camera_0::", "Redis key prefix");
+      Kwarg<std::string>("prefix", "rgbd::camera_0::", "Redis key prefix.");
 
   int fps = Kwarg<int>("fps", 30,
-                       "Streaming fps (0 = realtime, limited by the camera)");
+                       "Streaming fps (0 = realtime, limited by the camera).");
 
-  bool color = Flag("color", true, "Stream color images");
+  bool color = Flag("color", true, "Stream color images.");
 
-  bool depth = Flag("depth", true, "Stream depth images");
+  bool depth = Flag("depth", true, "Stream depth images.");
 
-  int res_color = Kwarg<int>("res-color", 1080, "Color image resolution");
+  int res_color = Kwarg<int>("res-color", 1080, "Color image resolution.");
 
-  bool show_image = Flag("display", true, "Show image display");
+  bool show_image = Flag("display", true, "Show image display.");
 
   bool use_redis_thread =
-      Flag("redis-thread", false, "Run Redis in a separate thread");
+      Flag("redis-thread", false, "Run Redis in a separate thread.");
 };
 
 /**
