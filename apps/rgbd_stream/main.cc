@@ -7,6 +7,7 @@
  * Authors: Toki Migimatsu
  */
 
+#include <ctrl_utils/argparse.h>
 #include <ctrl_utils/opencv.h>
 #include <ctrl_utils/redis_client.h>
 #include <ctrl_utils/thread_pool.h>
@@ -24,103 +25,39 @@ void Stop(int signal) { g_runloop = false; }
 
 enum class ImageType { Color, Depth };
 
-struct Args {
-  std::string camera = "";
-  std::string serial = "";                      // --serial
-  std::string redis_host = "127.0.0.1";         // -h
-  int redis_port = 6379;                        // -p
-  std::string redis_pass = "";                  // -a
-  std::string key_prefix = "rgbd::camera_0::";  // --prefix
-  int fps = 0;                                  // --fps
-  bool color = true;                            // --color
-  bool depth = true;                            // --depth
-  int res_color = 1080;                         // --res-color
-  bool show_image = true;                       // --show-image
-  bool use_redis_thread = false;                // --use-redis-thread
+struct Args : ctrl_utils::Args {
+  explicit Args(ctrl_utils::Args&& args) : ctrl_utils::Args(std::move(args)) {}
+
+  std::string camera =
+      Arg<std::string>("camera", "kinect, kinect2, or realsense");
+
+  std::string serial = Kwarg<std::string>("serial", "", "Camera serial");
+
+  std::string redis_host =
+      Kwarg<std::string>("h,redis-host", "127.0.0.1", "Redis hostname");
+
+  int redis_port = Kwarg<int>("p,redis-port", 6379, "Redis port");
+
+  std::string redis_pass =
+      Kwarg<std::string>("a,redis-pass", "", "Redis password");
+
+  std::string key_prefix =
+      Kwarg<std::string>("prefix", "rgbd::camera_0::", "Redis key prefix");
+
+  int fps = Kwarg<int>("fps", 30,
+                       "Streaming fps (0 = realtime, limited by the camera)");
+
+  bool color = Flag("color", true, "Stream color images");
+
+  bool depth = Flag("depth", true, "Stream depth images");
+
+  int res_color = Kwarg<int>("res-color", 1080, "Color image resolution");
+
+  bool show_image = Flag("display", true, "Show image display");
+
+  bool use_redis_thread =
+      Flag("redis-thread", false, "Run Redis in a separate thread");
 };
-
-Args ParseArgs(int argc, char* argv[]) {
-  std::stringstream ss;
-  ss << "Usage:" << std::endl
-     << "\trgbd_stream {kinect,kinect2,realsense}" << std::endl
-     << "\t\t[--serial <camera serial>]" << std::endl
-     << "\t\t[-h <redis hostname> (default 127.0.0.1)]" << std::endl
-     << "\t\t[-p <redis port> (default 6379)]" << std::endl
-     << "\t\t[-a <redis password>]" << std::endl
-     << "\t\t[--prefix <redis key prefix> (default rgbd::camera_0::)]"
-     << std::endl
-     << "\t\t[--fps <fps (0 = realtime, limited by the camera)> (default 0)]"
-     << std::endl
-     << "\t\t[--color <stream color> (default 1)]" << std::endl
-     << "\t\t[--depth <stream depth> (default 1)]" << std::endl
-     << "\t\t[--res-color <color resolution> (default 1080)]" << std::endl
-     << "\t\t[--show-image <show image display> (default 1)]" << std::endl
-     << "\t\t[--use-redis-thread <redis in separate thread> (default 0)]"
-     << std::endl
-     << "Example:" << std::endl
-     << "\t./rgbd_stream kinect2 --fps 30 --depth 0" << std::endl;
-
-  Args args;
-  int idx = 1;
-  if (idx < argc) {
-    // Camera model.
-    args.camera = argv[idx];
-    idx++;
-  }
-
-  while (idx < argc) {
-    std::string arg(argv[idx]);
-
-    if (idx + 1 >= argc) break;
-    if (arg == "--serial") {
-      args.serial = argv[idx + 1];
-      idx += 2;
-    } else if (arg == "-h") {
-      // Redis hostname.
-      args.redis_host = argv[idx + 1];
-      idx += 2;
-    } else if (arg == "-p") {
-      // Redis port.
-      args.redis_port = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else if (arg == "-a") {
-      // Redis password.
-      args.redis_pass = argv[idx + 1];
-      idx += 2;
-    } else if (arg == "--prefix") {
-      args.key_prefix = argv[idx + 1];
-      idx += 2;
-    } else if (arg == "--fps") {
-      args.fps = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else if (arg == "--color") {
-      args.color = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else if (arg == "--depth") {
-      args.depth = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else if (arg == "--res-color") {
-      args.res_color = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else if (arg == "--show-image") {
-      args.show_image = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else if (arg == "--use-redis-thread") {
-      args.use_redis_thread = std::atoi(argv[idx + 1]);
-      idx += 2;
-    } else {
-      // Unrecognized argument.
-      break;
-    }
-  }
-
-  if (idx < argc || argc <= 1) {
-    // Show usage.
-    throw std::invalid_argument(ss.str());
-  }
-
-  return args;
-}
 
 /**
  * Push items to the queue one at a time and then pop a group at a time.
@@ -184,13 +121,11 @@ class BatchQueue : private ctrl_utils::AtomicBuffer<T> {
 int main(int argc, char* argv[]) {
   std::signal(SIGINT, Stop);
 
-  Args args;
-  try {
-    args = ParseArgs(argc, argv);
-  } catch (std::exception& e) {
-    std::cerr << e.what();
-    return 1;
-  }
+  std::optional<Args> maybe_args = ctrl_utils::ParseArgs<Args>(argc, argv);
+  if (!maybe_args.has_value()) return 1;
+  const Args& args = *maybe_args;
+  std::cout << args.help_string() << std::endl;
+  std::cout << args << std::endl;
 
   // Connect to camera.
   std::cout << "Connecting to " << args.camera;
