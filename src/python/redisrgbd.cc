@@ -35,6 +35,26 @@ PYBIND11_MODULE(pyredisrgbd, m) {
   // Pddl
   py::class_<Kinect2>(m, "Kinect2")
       .def_property_readonly_static(
+          "color_width", [](py::object) { return Kinect2::kColorWidth; },
+          R"pbdoc(
+            Color image width.
+          )pbdoc")
+      .def_property_readonly_static(
+          "color_height", [](py::object) { return Kinect2::kColorHeight; },
+          R"pbdoc(
+            Color image height.
+          )pbdoc")
+      .def_property_readonly_static(
+          "depth_width", [](py::object) { return Kinect2::kDepthWidth; },
+          R"pbdoc(
+            Depth image width.
+          )pbdoc")
+      .def_property_readonly_static(
+          "depth_height", [](py::object) { return Kinect2::kDepthHeight; },
+          R"pbdoc(
+            Depth image height.
+          )pbdoc")
+      .def_property_readonly_static(
           "color_intrinsic_matrix",
           [](py::object) {
             return Eigen::Map<

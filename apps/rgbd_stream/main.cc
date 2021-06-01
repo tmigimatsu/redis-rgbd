@@ -122,45 +122,44 @@ class BatchQueue : private ctrl_utils::AtomicBuffer<T> {
 int main(int argc, char* argv[]) {
   std::signal(SIGINT, Stop);
 
-  std::optional<Args> maybe_args = ctrl_utils::ParseArgs<Args>(argc, argv);
-  if (!maybe_args.has_value()) return 1;
-  const Args& args = *maybe_args;
-  std::cout << args.help_string() << std::endl;
-  std::cout << args << std::endl;
+  std::optional<Args> args = ctrl_utils::ParseArgs<Args>(argc, argv);
+  if (!args.has_value()) return 1;
+  std::cout << args->help_string() << std::endl << *args << std::endl;
+
 
   // Connect to camera.
-  std::cout << "Connecting to " << args.camera;
-  if (!args.serial.empty()) {
-    std::cout << " with serial " << args.serial;
+  std::cout << "Connecting to " << args->camera;
+  if (!args->serial.empty()) {
+    std::cout << " with serial " << args->serial;
   }
   std::cout << "... " << std::endl;
 
   std::unique_ptr<redis_rgbd::Camera> camera;
-  if (args.camera == "kinect2") {
+  if (args->camera == "kinect2") {
     camera = std::make_unique<redis_rgbd::Kinect2>();
   } else {
-    std::cerr << args.camera << " is not supported." << std::endl;
+    std::cerr << args->camera << " is not supported." << std::endl;
     return 1;
   }
 
-  const bool is_connected = camera->Connect(args.serial);
+  const bool is_connected = camera->Connect(args->serial);
   if (!is_connected) return 1;
   std::cout << "Done." << std::endl;
 
   // Connect to Redis.
-  std::cout << "Connecting to Redis server at " << args.redis_host << ":"
-            << args.redis_port << "... " << std::flush;
+  std::cout << "Connecting to Redis server at " << args->redis_host << ":"
+            << args->redis_port << "... " << std::flush;
 
   ctrl_utils::RedisClient redis;
-  redis.connect(args.redis_host, args.redis_port, args.redis_pass);
+  redis.connect(args->redis_host, args->redis_port, args->redis_pass);
   std::cout << "Done." << std::endl;
 
-  const std::string key_color = args.key_prefix + "color";
-  const std::string key_depth = args.key_prefix + "depth";
+  const std::string key_color = args->key_prefix + "color";
+  const std::string key_depth = args->key_prefix + "depth";
 
   // Start streaming.
   std::cout << "Streaming..." << std::endl;
-  if (args.fps == 0) {
+  if (args->fps == 0) {
     // Set up callbacks.
     camera->SetColorCallback([&key_color, &redis](cv::Mat img) {
       redis.set(key_color, img);
@@ -172,7 +171,7 @@ int main(int argc, char* argv[]) {
     });
 
     // Start listening.
-    camera->Start(args.color, args.depth);
+    camera->Start(args->color, args->depth);
 
     // Spin loop with 100ms sleep interval until ctrl-c.
     ctrl_utils::Timer timer(100);
@@ -181,7 +180,7 @@ int main(int argc, char* argv[]) {
     }
   } else {
     // Create Redis request queue.
-    const size_t size_batch = static_cast<size_t>(args.color) + args.depth;
+    const size_t size_batch = static_cast<size_t>(args->color) + args->depth;
     BatchQueue<std::pair<ImageType, std::string>> redis_requests(size_batch);
 
     // Create Redis send function.
@@ -206,7 +205,7 @@ int main(int argc, char* argv[]) {
     ctrl_utils::ThreadPool<void> thread_pool(2);
 
     // Preallocate images.
-    const int rows = args.res_color;
+    const int rows = args->res_color;
     const double scale = static_cast<double>(rows) / camera->color_height();
     const int cols = camera->color_width() * scale + 0.5;
     cv::Mat img_color, img_depth;
@@ -247,50 +246,50 @@ int main(int argc, char* argv[]) {
 
     // Start Redis thread.
     std::thread redis_thread;
-    if (args.use_redis_thread) {
+    if (args->use_redis_thread) {
       redis_thread = std::thread([&SendRedis]() {
         while (g_runloop) SendRedis();
       });
     }
 
     // Start listening.
-    camera->Start(args.color, args.depth);
+    camera->Start(args->color, args->depth);
 
     // Send frames at given fps.
-    ctrl_utils::Timer timer(args.fps);
+    ctrl_utils::Timer timer(args->fps);
     while (g_runloop) {
       timer.Sleep();
 
       // Request frames.
       std::future<void> fut_color, fut_depth;
-      if (args.color) {
+      if (args->color) {
         fut_color = thread_pool.Submit(ProcessColor);
       }
-      if (args.depth) {
+      if (args->depth) {
         fut_depth = thread_pool.Submit(ProcessDepth);
       }
 
       // Wait for results.
-      if (args.color) {
+      if (args->color) {
         fut_color.wait();
       }
-      if (args.depth) {
+      if (args->depth) {
         fut_depth.wait();
       }
 
       // Send frames.
-      if (!args.use_redis_thread) {
+      if (!args->use_redis_thread) {
         SendRedis();
       }
 
       std::cout << timer.num_iters() << ": " << timer.time_elapsed() << "s "
                 << timer.average_freq() << "Hz" << std::endl;
 
-      if (args.show_image) {
-        if (args.color) {
+      if (args->show_image) {
+        if (args->color) {
           cv::imshow("Color", img_color);
         }
-        if (args.depth) {
+        if (args->depth) {
           cv::imshow("Depth", img_depth);
         }
         cv::waitKey(1);
