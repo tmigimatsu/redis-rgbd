@@ -21,6 +21,11 @@ class Camera {
   virtual ~Camera() = default;
 
   /**
+   * Camera name.
+   */
+  virtual const std::string& name() const = 0;
+
+  /**
    * Connects to the Kinect usb device.
    *
    * @param serial Optional serial address.
@@ -72,6 +77,11 @@ class Camera {
   virtual size_t color_height() const = 0;
 
   /**
+   * Channel type of the color image.
+   */
+  virtual int color_channel() const = 0;
+
+  /**
    * Color intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].
    */
   virtual const cv::Mat& color_intrinsic_matrix() const = 0;
@@ -90,6 +100,11 @@ class Camera {
    * Height of the depth image.
    */
   virtual size_t depth_height() const = 0;
+
+  /**
+   * Channel type of the depth image.
+   */
+  virtual int depth_channel() const = 0;
 
   /**
    * Depth intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].

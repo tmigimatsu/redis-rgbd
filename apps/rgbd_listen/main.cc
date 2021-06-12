@@ -58,6 +58,9 @@ int main(int argc, char* argv[]) {
   // Start streaming.
   std::cout << "Listening..." << std::endl;
 
+  // Get scaled color image first.
+  cv::Mat img_bgr_mini = redis.sync_get<cv::Mat>(key_color);
+
   cv::Mat img_bgr(redis_rgbd::Kinect2::kColorHeight,
                   redis_rgbd::Kinect2::kColorWidth, CV_8UC3);
 
@@ -70,10 +73,13 @@ int main(int argc, char* argv[]) {
   ctrl_utils::Timer timer(args->fps);
   while (g_runloop) {
     timer.Sleep();
-    std::future<void> fut_img_bgr = redis.get(key_color, img_bgr);
+    std::future<void> fut_img_bgr_mini = redis.get(key_color, img_bgr_mini);
     std::future<void> fut_img_depth = redis.get(key_depth, img_depth);
     redis.commit();
-    fut_img_bgr.wait();
+
+    fut_img_bgr_mini.wait();
+    cv::resize(img_bgr_mini, img_bgr, img_bgr.size());
+
     fut_img_depth.wait();
 
     redis_rgbd::Kinect2::RegisterColorToDepth(img_bgr, img_depth, img_bgr_reg);

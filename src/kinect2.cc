@@ -261,11 +261,17 @@ class Kinect2::Kinect2Impl {
   std::thread thread_depth_callback_;
 
   cv::Mat img_bgr_;
+
+  // Flipped images require different intrinsics/extrinsics.
+  // cv::Mat img_bgr_flipped_ = cv::Mat(kColorWidth, kColorHeight, CV_8UC3);
+  // cv::Mat img_depth_flipped_ = cv::Mat(kDepthWidth, kDepthHeight, CV_32FC1);
 };
 
 /////////////
 // Kinect2 //
 /////////////
+
+const std::string Kinect2::kName = "kinect2";
 
 Kinect2::Kinect2() {}
 Kinect2::~Kinect2() {}
@@ -473,6 +479,12 @@ cv::Mat Kinect2::Kinect2Impl::color_image() {
 
   // Return a Mat wrapper without copying data.
   return img_bgr_;
+
+  // // Flip image around y-axis.
+  // cv::flip(img_bgr_, img_bgr_flipped_, 1);
+
+  // // Return a Mat wrapper without copying data.
+  // return img_bgr_flipped_;
 }
 
 cv::Mat Kinect2::Kinect2Impl::depth_image() {
@@ -481,6 +493,12 @@ cv::Mat Kinect2::Kinect2Impl::depth_image() {
 
   // Return a Mat wrapper without copying data.
   return img_depth;
+
+  // // Flip image around y-axis.
+  // cv::flip(img_depth, img_depth_flipped_, 1);
+
+  // // Return a Mat wrapper without copying data.
+  // return img_depth_flipped_;
 }
 
 ///////////////////

@@ -25,11 +25,15 @@ namespace redis_rgbd {
 
 class Kinect2 : public Camera {
  public:
+  static const std::string kName;  // kinect2
+
   static constexpr size_t kColorWidth = 1920;
   static constexpr size_t kColorHeight = 1080;
+  static constexpr size_t kColorChannel = CV_8UC3;
 
   static constexpr size_t kDepthWidth = 512;
   static constexpr size_t kDepthHeight = 424;
+  static constexpr size_t kDepthChannel = CV_32FC1;
 
   // From Kinect2 device.
   static constexpr std::array<float, 9> kColorIntrinsicMatrix = {
@@ -93,6 +97,11 @@ class Kinect2 : public Camera {
   virtual ~Kinect2();
 
   /**
+   * Camera name.
+   */
+  virtual const std::string& name() const override { return kName; }
+
+  /**
    * Connects to the Kinect usb device.
    *
    * @param serial Optional serial address.
@@ -146,6 +155,11 @@ class Kinect2 : public Camera {
   virtual size_t color_height() const override { return kColorHeight; }
 
   /**
+   * Channel type of the color image.
+   */
+  virtual int color_channel() const override { return kColorChannel; }
+
+  /**
    * Color intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].
    */
   virtual const cv::Mat& color_intrinsic_matrix() const override {
@@ -170,6 +184,11 @@ class Kinect2 : public Camera {
    * Height of the depth image.
    */
   virtual size_t depth_height() const override { return kDepthHeight; }
+
+  /**
+   * Channel type of the depth image.
+   */
+  virtual int depth_channel() const override { return kDepthChannel; }
 
   /**
    * Depth intrinsic matrix coefficients [fx, 0, cx; 0, fy, cy; 0, 0, 1].

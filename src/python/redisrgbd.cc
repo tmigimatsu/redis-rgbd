@@ -45,6 +45,11 @@ PYBIND11_MODULE(pyredisrgbd, m) {
             Color image height.
           )pbdoc")
       .def_property_readonly_static(
+          "color_channel", [](py::object) { return Kinect2::kColorChannel; },
+          R"pbdoc(
+            Color image channel type.
+          )pbdoc")
+      .def_property_readonly_static(
           "depth_width", [](py::object) { return Kinect2::kDepthWidth; },
           R"pbdoc(
             Depth image width.
@@ -53,6 +58,11 @@ PYBIND11_MODULE(pyredisrgbd, m) {
           "depth_height", [](py::object) { return Kinect2::kDepthHeight; },
           R"pbdoc(
             Depth image height.
+          )pbdoc")
+      .def_property_readonly_static(
+          "depth_channel", [](py::object) { return Kinect2::kDepthChannel; },
+          R"pbdoc(
+            Depth image channel type.
           )pbdoc")
       .def_property_readonly_static(
           "color_intrinsic_matrix",

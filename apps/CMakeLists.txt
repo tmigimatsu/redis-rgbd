@@ -10,5 +10,6 @@
 lib_add_subdirectory(ctrl_utils)
 ctrl_utils_add_subdirectory(cpp_redis)
 
+add_subdirectory(rgbd_calibrate)
 add_subdirectory(rgbd_listen)
 add_subdirectory(rgbd_stream)
