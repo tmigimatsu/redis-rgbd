@@ -118,11 +118,11 @@ int main(int argc, char* argv[]) {
 
   // Preallocate registered images.
   CameraRobotState state;
-  state.img_color = cv::Mat(camera->color_width(), camera->color_height(),
+  state.img_color = cv::Mat(camera->color_height(), camera->color_width(),
                             camera->color_channel());
-  state.img_depth = cv::Mat(camera->color_width(), camera->color_height(),
+  state.img_depth = cv::Mat(camera->color_height(), camera->color_width(),
                             camera->depth_channel());
-  cv::Mat img_depth_registered(camera->color_width(), camera->color_height(),
+  cv::Mat img_depth_registered(camera->color_height(), camera->color_width(),
                                camera->depth_channel());
 
   // Start calibration thread.
@@ -245,10 +245,8 @@ int main(int argc, char* argv[]) {
     // Zero out unseen depth pixels.
     for (int i = 0; i < camera->color_height(); i++) {
       for (int j = 0; j < camera->color_width(); j++) {
-        if (img_depth.at<float>(i, j) <= 0) {
-          cv::Vec3b pixel = img_color.at<cv::Vec3b>(i, j);
-          pixel = 0;
-        }
+        if (img_depth_registered.at<float>(i, j) > 0) continue;
+        img_color.at<cv::Vec3b>(i, j) = 0;
       }
     }
 
@@ -262,15 +260,18 @@ int main(int argc, char* argv[]) {
     // Update state.
     state.point_ee = point_ee;
     std::swap(img_color, state.img_color);
-    std::swap(img_depth, state.img_depth);
+    std::swap(img_depth_registered, state.img_depth);
 
     // Show image.
     cv::imshow(camera->name(), state.img_color);
+    cv::imshow(camera->name() + "depth", state.img_depth);
 
     // Allow click to process with updated image..
     state.ownership.release();
 
-    cv::waitKey(1);
+    if (cv::waitKey(1) == 'q') {
+      g_runloop = false;
+    }
   }
 
   // Shut down.

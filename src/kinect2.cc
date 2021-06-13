@@ -99,7 +99,8 @@ constexpr float ComputeW(float mx, float my,
 
 using Arr2f = std::array<float, 2>;
 constexpr Arr2f DepthToColor(float x, float y) {
-  const float depth_cx = std::get<2>(kDepthIntrinsicMatrix);
+  // Intrinsic matrix is for image flipped about Y-axis.
+  const float depth_cx = kDepthWidth - std::get<2>(kDepthIntrinsicMatrix);
   const float depth_cy = std::get<5>(kDepthIntrinsicMatrix);
 
   const float mx = (x - depth_cx) * kDepthQ;
@@ -142,7 +143,8 @@ static std::optional<std::array<int, 2>> DepthToColorIndices(int x_depth,
   if (ry_int < 0 || ry_int >= kColorHeight) return {};
 
   const float fx = std::get<0>(kColorIntrinsicMatrix);
-  const float cx = std::get<2>(kColorIntrinsicMatrix);
+  // Intrinsic matrix is for image flipped about Y-axis.
+  const float cx = kColorWidth - std::get<2>(kColorIntrinsicMatrix);
 
   const float rx = (map_x + (kShiftM / z)) * fx + cx;
   const int rx_int = rx + 0.5;
@@ -267,8 +269,8 @@ class Kinect2::Kinect2Impl {
   cv::Mat img_bgr_;
 
   // Flipped images require different intrinsics/extrinsics.
-  cv::Mat img_bgr_flipped_ = cv::Mat(kColorWidth, kColorHeight, CV_8UC3);
-  cv::Mat img_depth_flipped_ = cv::Mat(kDepthWidth, kDepthHeight, CV_32FC1);
+  cv::Mat img_bgr_flipped_ = cv::Mat(kColorHeight, kColorWidth, CV_8UC3);
+  cv::Mat img_depth_flipped_ = cv::Mat(kDepthHeight, kDepthWidth, CV_32FC1);
 };
 
 /////////////
