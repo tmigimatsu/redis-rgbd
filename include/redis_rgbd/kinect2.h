@@ -39,7 +39,7 @@ class Kinect2 : public Camera {
   static constexpr std::array<float, 9> kColorIntrinsicMatrix = {
       1081.3720703125,  // [[ fx ,
       0,                //    0  ,
-      959.5,            //    cx ],
+      kColorWidth - 959.5,            //    cx ],
       0,                //  [ 0  ,
       1081.3720703125,  //    fy ,
       539.5,            //    cy ],
@@ -74,7 +74,7 @@ class Kinect2 : public Camera {
   static constexpr std::array<float, 9> kDepthIntrinsicMatrix = {
       364.97171020507812,  // [[ fx ,
       0,                   //    0  ,
-      259.31719970703125,  //    cx ],
+      kDepthWidth - 259.31719970703125,  //    cx ],
       0,                   //  [ 0  ,
       364.97171020507812,  //    fy ,
       204.24639892578125,  //    cy ],
@@ -209,6 +209,9 @@ class Kinect2 : public Camera {
   /**
    * Registers the color image to the depth image.
    *
+   * Assumes the color and depth images are flipped about the Y-axis (as opposed
+   * to the default selfie camera view).
+   *
    * @param color 1920 x 1080 uint8 BGR image.
    * @param depth 512 x 424 float32 depth image.
    * @param color_out 512 x 424 uint8 registered BGR image.
@@ -218,6 +221,9 @@ class Kinect2 : public Camera {
 
   /**
    * Registers the depth image to the color image.
+   *
+   * Assumes the color and depth images are flipped about the Y-axis (as opposed
+   * to the default selfie camera view).
    *
    * @param depth 512 x 424 float32 depth image.
    * @param color 1920 x 1080 uint8 BGR image.

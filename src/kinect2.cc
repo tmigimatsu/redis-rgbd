@@ -263,8 +263,8 @@ class Kinect2::Kinect2Impl {
   cv::Mat img_bgr_;
 
   // Flipped images require different intrinsics/extrinsics.
-  // cv::Mat img_bgr_flipped_ = cv::Mat(kColorWidth, kColorHeight, CV_8UC3);
-  // cv::Mat img_depth_flipped_ = cv::Mat(kDepthWidth, kDepthHeight, CV_32FC1);
+  cv::Mat img_bgr_flipped_ = cv::Mat(kColorWidth, kColorHeight, CV_8UC3);
+  cv::Mat img_depth_flipped_ = cv::Mat(kDepthWidth, kDepthHeight, CV_32FC1);
 };
 
 /////////////
@@ -318,16 +318,18 @@ void Kinect2::RegisterColorToDepth(const cv::Mat& color, const cv::Mat& depth,
   for (int y = 0; y < kDepthHeight; y++) {
     for (int x = 0; x < kDepthWidth; x++) {
       // Get corresponding color coordinates.
+      const int x_flip = kDepthWidth - x;
       const std::optional<std::array<int, 2>> xy_color =
-          DepthToColorIndices(x, y, depth.at<float>(y, x));
+          DepthToColorIndices(x_flip, y, depth.at<float>(y, x));
 
       // Set output color pixel.
       cv::Vec3b& bgr = color_out.at<cv::Vec3b>(y, x);
       if (!xy_color.has_value()) {
         std::fill(std::begin(bgr.val), std::end(bgr.val), 0);
       } else {
-        const std::array<int, 2>& xy = *xy_color;
-        bgr = color.at<cv::Vec3b>(xy[1], xy[0]);
+        const int y_color = (*xy_color)[1];
+        const int x_color = kColorWidth - (*xy_color)[0];
+        bgr = color.at<cv::Vec3b>(y_color, x_color);
       }
     }
   }
@@ -353,23 +355,26 @@ void Kinect2::RegisterDepthToColor(const cv::Mat& depth, const cv::Mat& color,
   for (int y = 0; y < kDepthHeight; y++) {
     for (int x = 0; x < kDepthWidth; x++) {
       // Get corresponding color coordinates.
+      const int x_flip = kDepthWidth - x;
       const float z = depth.at<float>(y, x);
       const std::optional<std::array<int, 2>> xy_color =
-          DepthToColorIndices(x, y, z);
+          DepthToColorIndices(x_flip, y, z);
 
       if (!xy_color.has_value()) continue;
 
       // Min box filter over color image.
+      const int y_color = (*xy_color)[1];
+      const int x_color = kColorWidth - (*xy_color)[0];
       for (int yy = -kFilterHeightHalf; yy <= kFilterHeightHalf; yy++) {
-        const int y_color = (*xy_color)[1] + yy;
-        if (y_color < 0 || y_color >= kColorHeight) continue;
+        const int yy_color = y_color + yy;
+        if (yy_color < 0 || yy_color >= kColorHeight) continue;
 
         for (int xx = -kFilterWidthHalf; xx <= kFilterWidthHalf; xx++) {
-          const int x_color = (*xy_color)[0] + xx;
-          assert(x_color > 0 && x_color < kColorWidth);
+          const int xx_color = x_color + xx;
+          assert(xx_color > 0 && xx_color < kColorWidth);
 
           // Set output pixel value to min z in window.
-          float& zz = depth_out.at<float>(y_color, x_color);
+          float& zz = depth_out.at<float>(yy_color, xx_color);
           if (z < zz || zz == 0) zz = z;
         }
       }
@@ -477,28 +482,28 @@ cv::Mat Kinect2::Kinect2Impl::color_image() {
   cv::Mat img_bgrx(kColorHeight, kColorWidth, CV_8UC4, buffer_bgrx.data());
   cv::cvtColor(img_bgrx, img_bgr_, cv::COLOR_BGRA2BGR);
 
-  // Return a Mat wrapper without copying data.
-  return img_bgr_;
-
-  // // Flip image around y-axis.
-  // cv::flip(img_bgr_, img_bgr_flipped_, 1);
-
   // // Return a Mat wrapper without copying data.
-  // return img_bgr_flipped_;
+  // return img_bgr_;
+
+  // Flip image around y-axis.
+  cv::flip(img_bgr_, img_bgr_flipped_, 1);
+
+  // Return a Mat wrapper without copying data.
+  return img_bgr_flipped_;
 }
 
 cv::Mat Kinect2::Kinect2Impl::depth_image() {
   std::vector<float>& buffer_depth = listener_.GetDepthFrame();
   cv::Mat img_depth(kDepthHeight, kDepthWidth, CV_32FC1, buffer_depth.data());
 
-  // Return a Mat wrapper without copying data.
-  return img_depth;
-
-  // // Flip image around y-axis.
-  // cv::flip(img_depth, img_depth_flipped_, 1);
-
   // // Return a Mat wrapper without copying data.
-  // return img_depth_flipped_;
+  // return img_depth;
+
+  // Flip image around y-axis.
+  cv::flip(img_depth, img_depth_flipped_, 1);
+
+  // Return a Mat wrapper without copying data.
+  return img_depth_flipped_;
 }
 
 ///////////////////
