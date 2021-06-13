@@ -56,17 +56,23 @@ struct Args : ctrl_utils::Args {
                          "Redis key for the robot's end-effector position.");
 
   std::string key_prefix_camera = Kwarg<std::string>(
-      "camera-key-prefix", "kinect2::camera_0::",
+      "key-prefix", "rgbd::camera_0::",
       "Redis key prefix for the camera's pose. The quaternion will be set to "
-      "<camera-key-prefix>ori and the position to <camera-key-prefix>pos.");
+      "<key-prefix>ori and the position to <key-prefix>pos.");
+
+  bool verbose = Flag("verbose", false, "Print camera logging output.");
 };
 
 struct CameraRobotState {
+  // State updated by main loop.
+  cv::Point3d point_ee;
   cv::Mat img_color;
   cv::Mat img_depth;
+  std::binary_semaphore ownership = std::binary_semaphore(false);
+
+  // Queue of mouse clicks.
   std::vector<cv::Point3d> points_ee;
   std::vector<cv::Point2d> points_img;
-  std::binary_semaphore ownership = std::binary_semaphore(false);
   std::binary_semaphore data_ready = std::binary_semaphore(false);
 };
 
@@ -88,7 +94,7 @@ int main(int argc, char* argv[]) {
 
   std::shared_ptr<redis_rgbd::Camera> camera;
   if (args->camera == "kinect2") {
-    camera = std::make_shared<redis_rgbd::Kinect2>();
+    camera = std::make_shared<redis_rgbd::Kinect2>(args->verbose);
   } else {
     std::cerr << args->camera << " is not supported." << std::endl;
     return 1;
@@ -127,6 +133,8 @@ int main(int argc, char* argv[]) {
     while (g_runloop) {
       // Get data when available.
       state.data_ready.acquire();
+      if (!g_runloop) break;
+
       points_ee.insert(points_ee.end(),
                        std::make_move_iterator(state.points_ee.begin()),
                        std::make_move_iterator(state.points_ee.end()));
@@ -137,13 +145,18 @@ int main(int argc, char* argv[]) {
       state.points_img.clear();
       state.ownership.release();
 
-      if (points_ee.size() < 3) continue;
+      std::cout << std::endl
+                << "Click: " << points_img.back() << std::endl
+                << "End-effector position: " << points_ee.back() << std::endl;
+
+      if (points_ee.size() < 4) continue;
 
       // Optimize.
+      std::cout << std::endl << "Optimizing... " << std::flush;
       cv::Vec3d rvec, tvec;
-      // TODO: Fix intrinsic matrix.
       cv::solvePnP(points_ee, points_img, camera->color_intrinsic_matrix(),
-                   camera->color_distortion_coeffs(), rvec, tvec);
+                   camera->color_distortion_coeffs(), rvec, tvec,
+                   cv::SOLVEPNP_SQPNP);
 
       // Convert position.
       const Eigen::Translation3d p_world_to_camera(tvec[0], tvec[1], tvec[2]);
@@ -169,16 +182,21 @@ int main(int argc, char* argv[]) {
       redis.set(args->key_prefix_camera + "ori", quat);
       redis.commit();
 
-      std::cout << "ee positions:" << std::endl;
+      std::cout << "Done." << std::endl
+                << std::endl
+                << "ee positions:" << std::endl;
       for (const cv::Point3d& point : points_ee) {
         std::cout << point << std::endl;
       }
-      std::cout << "image points:" << std::endl;
+      std::cout << std::endl << "image points:" << std::endl;
       for (const cv::Point2d& point : points_img) {
         std::cout << point << std::endl;
       }
-      std::cout << "rvec: " << rvec << std::endl;
-      std::cout << "tvec: " << tvec << std::endl;
+      std::cout << std::endl
+                << ctrl_utils::bold << "rvec: " << ctrl_utils::normal << rvec
+                << std::endl
+                << ctrl_utils::bold << "tvec: " << ctrl_utils::normal << tvec
+                << std::endl;
     }
   });
 
@@ -195,6 +213,9 @@ int main(int argc, char* argv[]) {
 
         // Send click pose.
         state.ownership.acquire();
+        if (!g_runloop) return;
+
+        state.points_ee.push_back(state.point_ee);
         state.points_img.emplace_back(x, y);
         state.data_ready.release();
       },
@@ -233,12 +254,13 @@ int main(int argc, char* argv[]) {
 
     // Get end-effector position.
     const Eigen::Vector3d pos_ee = fut_pos_ee.get();
+    const cv::Point3d point_ee(pos_ee(0), pos_ee(1), pos_ee(2));
 
     // If calibration isn't ready, try next cycle.
     if (!state.ownership.try_acquire()) continue;
 
     // Update state.
-    state.points_ee.emplace_back(pos_ee(0), pos_ee(1), pos_ee(2));
+    state.point_ee = point_ee;
     std::swap(img_color, state.img_color);
     std::swap(img_depth, state.img_depth);
 
@@ -247,7 +269,20 @@ int main(int argc, char* argv[]) {
 
     // Allow click to process with updated image..
     state.ownership.release();
+
+    cv::waitKey(1);
   }
+
+  // Shut down.
+  std::cout << std::endl << "Stopping calibration thread... " << std::flush;
+  state.ownership.release();
+  state.data_ready.release();
+  if (thread_calibrate.joinable()) {
+    thread_calibrate.join();
+  }
+  std::cout << "Done." << std::endl;
+
+  std::cout << "Shutting down camera..." << std::endl;
 
   return 0;
 }

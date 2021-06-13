@@ -9,19 +9,23 @@
 
 #include "redis_rgbd/kinect2.h"
 
-#include <ctrl_utils/semaphore.h>
-
+// std
 #include <algorithm>  // std::swap
 #include <array>      // std::array
 #include <csignal>    // std::sig_atomic_t
 #include <cstring>    // std::memcpy
+#include <numeric>    // std::isfinite
+#include <optional>   // std::optional
+#include <thread>     // std::thread
+#include <vector>     // std::vector
+
+// external
+#include <ctrl_utils/semaphore.h>
+#include <libfreenect2/logger.h>
+
 #include <libfreenect2/frame_listener.hpp>
 #include <libfreenect2/libfreenect2.hpp>
-#include <numeric>  // std::isfinite
 #include <opencv2/opencv.hpp>
-#include <optional>  // std::optional
-#include <thread>    // std::thread
-#include <vector>    // std::vector
 
 namespace {
 
@@ -273,7 +277,15 @@ class Kinect2::Kinect2Impl {
 
 const std::string Kinect2::kName = "kinect2";
 
-Kinect2::Kinect2() {}
+Kinect2::Kinect2(bool verbose) {
+  // Default verbosity is INFO.
+  if (verbose) return;
+
+  // If not verbose, set to WARNING.
+  libfreenect2::Logger* logger =
+      libfreenect2::createConsoleLogger(libfreenect2::Logger::Warning);
+  libfreenect2::setGlobalLogger(logger);
+}
 Kinect2::~Kinect2() {}
 
 bool Kinect2::Connect(const std::string& serial) {

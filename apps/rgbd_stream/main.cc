@@ -58,6 +58,8 @@ struct Args : ctrl_utils::Args {
 
   bool use_redis_thread =
       Flag("redis-thread", false, "Run Redis in a separate thread.");
+
+  bool verbose = Flag("verbose", false, "Print streaming frame rate.");
 };
 
 /**
@@ -126,7 +128,6 @@ int main(int argc, char* argv[]) {
   if (!args.has_value()) return 1;
   std::cout << args->help_string() << std::endl << *args << std::endl;
 
-
   // Connect to camera.
   std::cout << "Connecting to " << args->camera;
   if (!args->serial.empty()) {
@@ -136,7 +137,7 @@ int main(int argc, char* argv[]) {
 
   std::unique_ptr<redis_rgbd::Camera> camera;
   if (args->camera == "kinect2") {
-    camera = std::make_unique<redis_rgbd::Kinect2>();
+    camera = std::make_unique<redis_rgbd::Kinect2>(args->verbose);
   } else {
     std::cerr << args->camera << " is not supported." << std::endl;
     return 1;
@@ -282,8 +283,10 @@ int main(int argc, char* argv[]) {
         SendRedis();
       }
 
-      std::cout << timer.num_iters() << ": " << timer.time_elapsed() << "s "
-                << timer.average_freq() << "Hz" << std::endl;
+      if (args->verbose) {
+        std::cout << timer.num_iters() << ": " << timer.time_elapsed() << "s "
+                  << timer.average_freq() << "Hz" << std::endl;
+      }
 
       if (args->show_image) {
         if (args->color) {
@@ -302,6 +305,8 @@ int main(int argc, char* argv[]) {
       redis_thread.join();
     }
   }
+
+  std::cout << std::endl << "Shutting down camera..." << std::endl;
 
   return 0;
 }

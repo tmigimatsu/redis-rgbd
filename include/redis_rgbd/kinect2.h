@@ -37,15 +37,15 @@ class Kinect2 : public Camera {
 
   // From Kinect2 device.
   static constexpr std::array<float, 9> kColorIntrinsicMatrix = {
-      1081.3720703125,  // [[ fx ,
-      0,                //    0  ,
-      kColorWidth - 959.5,            //    cx ],
-      0,                //  [ 0  ,
-      1081.3720703125,  //    fy ,
-      539.5,            //    cy ],
-      0,                //  [ 0 ,
-      0,                //    0 ,
-      1,                //    1 ]]
+      1081.3720703125,      // [[ fx ,
+      0,                    //    0  ,
+      kColorWidth - 959.5,  //    cx ],
+      0,                    //  [ 0  ,
+      1081.3720703125,      //    fy ,
+      539.5,                //    cy ],
+      0,                    //  [ 0 ,
+      0,                    //    0 ,
+      1,                    //    1 ]]
   };
 
   // From calibration on 09/04/19.
@@ -72,15 +72,15 @@ class Kinect2 : public Camera {
 
   // From Kinect2 device.
   static constexpr std::array<float, 9> kDepthIntrinsicMatrix = {
-      364.97171020507812,  // [[ fx ,
-      0,                   //    0  ,
+      364.97171020507812,                // [[ fx ,
+      0,                                 //    0  ,
       kDepthWidth - 259.31719970703125,  //    cx ],
-      0,                   //  [ 0  ,
-      364.97171020507812,  //    fy ,
-      204.24639892578125,  //    cy ],
-      0,                   //  [ 0 ,
-      0,                   //    0 ,
-      1,                   //    1 ]]
+      0,                                 //  [ 0  ,
+      364.97171020507812,                //    fy ,
+      204.24639892578125,                //    cy ],
+      0,                                 //  [ 0 ,
+      0,                                 //    0 ,
+      1,                                 //    1 ]]
   };
 
   // From Kinect2 device.
@@ -92,7 +92,7 @@ class Kinect2 : public Camera {
       0.089108601212501526   //   k3 ]
   };
 
-  Kinect2();
+  explicit Kinect2(bool verbose = false);
 
   virtual ~Kinect2();
 
