@@ -60,7 +60,7 @@ struct Args : ctrl_utils::Args {
   int res_color = Kwarg<int>("res-color", 1080, "Color image resolution.");
 
   bool register_depth =
-      Flag("register-depth", true,
+      Flag("register-depth", false,
            "Streams the depth image registered to color. The depth image will "
            "be the same size as the color image.");
 
@@ -314,6 +314,7 @@ void StreamFps(const std::optional<Args>& args,
   redis.set(args->key_prefix + "color::intrinsic", intrinsic_color);
   redis.set(args->key_prefix + "depth::intrinsic", intrinsic_depth);
   redis.commit();
+  cv::Mat img_depth_display;
 
   // Create image processing functions.
   std::function<void()> ProcessColor =
@@ -375,7 +376,8 @@ void StreamFps(const std::optional<Args>& args,
         cv::imshow("Color", img_color);
       }
       if (args->depth) {
-        cv::imshow("Depth", img_depth);
+        cv::normalize(img_depth, img_depth_display, 1.0, 0.0, cv::NORM_INF);
+        cv::imshow("Depth", img_depth_display);
       }
       cv::waitKey(1);
     }
