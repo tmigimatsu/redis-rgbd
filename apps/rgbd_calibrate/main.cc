@@ -116,8 +116,7 @@ int main(int argc, char* argv[]) {
                             camera->color_channel());
   state.img_depth = cv::Mat(camera->color_width(), camera->color_height(),
                             camera->depth_channel());
-  cv::Mat img_depth_registered(camera->color_width(), camera->color_height(),
-                               camera->depth_channel());
+  cv::Mat img_depth_registered;
 
   // Start calibration thread.
   std::thread thread_calibrate([&args, camera, &redis, &state]() {
@@ -216,7 +215,7 @@ int main(int argc, char* argv[]) {
 
     // Register depth image to color.
     if (kinect2 != nullptr) {
-      kinect2->RegisterDepthToColor(img_depth, img_color, img_depth_registered);
+      kinect2->RegisterDepthToColor(img_depth, img_depth_registered);
     } else {
       throw std::runtime_error("Not implemented yet.");
     }

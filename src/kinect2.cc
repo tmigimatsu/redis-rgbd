@@ -306,12 +306,7 @@ void Kinect2::RegisterColorToDepth(const cv::Mat& color, const cv::Mat& depth,
   // Check output size.
   if (color_out.rows != kDepthHeight || color_out.cols != kDepthWidth ||
       color_out.type() != CV_8UC3) {
-    std::stringstream ss;
-    ss << "Kinect2::RegisterColorToDepth(): color_out must be preallocated "
-          "with size ["
-       << kDepthHeight << ", " << kDepthWidth << "] and type CV_8UC3."
-       << std::endl;
-    std::invalid_argument(ss.str());
+    color_out = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
   }
 
   // Iterate over depth image.
@@ -335,17 +330,11 @@ void Kinect2::RegisterColorToDepth(const cv::Mat& color, const cv::Mat& depth,
   }
 }
 
-void Kinect2::RegisterDepthToColor(const cv::Mat& depth, const cv::Mat& color,
-                                   cv::Mat& depth_out) {
+void Kinect2::RegisterDepthToColor(const cv::Mat& depth, cv::Mat& depth_out) {
   // Check output size.
   if (depth_out.rows != kColorHeight || depth_out.cols != kColorWidth ||
       depth_out.type() != CV_32FC1) {
-    std::stringstream ss;
-    ss << "Kinect2::RegisterDepthToColor(): depth_out must be preallocated "
-          "with size ["
-       << kColorHeight << ", " << kColorWidth << "] and type CV_32FC1."
-       << std::endl;
-    std::invalid_argument(ss.str());
+    depth_out = cv::Mat(kColorHeight, kColorWidth, CV_32FC1);
   }
 
   // Clear output image.

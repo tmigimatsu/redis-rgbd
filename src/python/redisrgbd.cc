@@ -158,21 +158,9 @@ PYBIND11_MODULE(pyredisrgbd, m) {
             )pbdoc")
       .def_static(
           "register_depth_to_color",
-          [](py::array_t<uint8_t> color, py::array_t<float> depth,
-             py::array_t<float> depth_out) {
-            py::buffer_info buf_color = color.request();
+          [](py::array_t<float> depth, py::array_t<float> depth_out) {
             py::buffer_info buf_depth = depth.request();
             py::buffer_info buf_depth_out = depth_out.request();
-
-            if (buf_color.ndim != 3 ||
-                buf_color.shape[0] != Kinect2::kColorHeight ||
-                buf_color.shape[1] != Kinect2::kColorWidth ||
-                buf_color.shape[2] != 3) {
-              std::stringstream ss;
-              ss << "color must have dimensions [" << Kinect2::kColorHeight
-                 << ", " << Kinect2::kColorWidth << ", " << 3 << "].";
-              throw std::runtime_error(ss.str());
-            }
 
             if (buf_depth.ndim != 2 ||
                 buf_depth.shape[0] != Kinect2::kDepthHeight ||
@@ -192,21 +180,18 @@ PYBIND11_MODULE(pyredisrgbd, m) {
               throw std::runtime_error(ss.str());
             }
 
-            const cv::Mat img_color(Kinect2::kColorHeight, Kinect2::kColorWidth,
-                                    CV_8UC3, buf_color.ptr);
             const cv::Mat img_depth(Kinect2::kDepthHeight, Kinect2::kDepthWidth,
                                     CV_32FC1, buf_depth.ptr);
             cv::Mat img_depth_out(Kinect2::kColorHeight, Kinect2::kColorWidth,
                                   CV_32FC1, buf_depth_out.ptr);
 
-            Kinect2::RegisterDepthToColor(img_depth, img_color, img_depth_out);
+            Kinect2::RegisterDepthToColor(img_depth, img_depth_out);
           },
-          "depth"_a, "color"_a, "depth_out"_a, R"pbdoc(
+          "depth"_a, "depth_out"_a, R"pbdoc(
              Undistorts the depth image and registers the color image with it.
 
              Args:
                  depth: 512 x 424 float32 depth image.
-                 color: 1920 x 1080 uint8 BGR image.
                  depth_out: 1920 x 1080 uint8 registered depth image.
             )pbdoc")
       .def_static(

@@ -209,12 +209,14 @@ class Kinect2 : public Camera {
   /**
    * Registers the color image to the depth image.
    *
-   * Assumes the color and depth images are flipped about the Y-axis (as opposed
-   * to the default selfie camera view).
+   * Assumes the color and depth images are given by `color_image()`, and
+   * `depth_image()`, which are flipped horizontally (as opposed
+   * to the default selfie camera view given by the Kinect2 drivers).
    *
    * @param color 1920 x 1080 uint8 BGR image.
    * @param depth 512 x 424 float32 depth image.
-   * @param color_out 512 x 424 uint8 registered BGR image.
+   * @param color_out 512 x 424 uint8 registered BGR image. Will allocate a new
+   *                  cv::Mat if it is not the correct shape.
    */
   static void RegisterColorToDepth(const cv::Mat& color, const cv::Mat& depth,
                                    cv::Mat& color_out);
@@ -222,15 +224,15 @@ class Kinect2 : public Camera {
   /**
    * Registers the depth image to the color image.
    *
-   * Assumes the color and depth images are flipped about the Y-axis (as opposed
-   * to the default selfie camera view).
+   * Assumes the color and depth images are given by `color_image()`, and
+   * `depth_image()`, which are flipped horizontally (as opposed
+   * to the default selfie camera view given by the Kinect2 drivers).
    *
    * @param depth 512 x 424 float32 depth image.
-   * @param color 1920 x 1080 uint8 BGR image.
-   * @param depth_out 1920 x 1080 float32 registered depth image.
+   * @param depth_out 1920 x 1080 float32 registered depth image. Will allocate
+   *                  a new cv::Mat if it is not the correct shape.
    */
-  static void RegisterDepthToColor(const cv::Mat& depth, const cv::Mat& color,
-                                   cv::Mat& depth_out);
+  static void RegisterDepthToColor(const cv::Mat& depth, cv::Mat& depth_out);
 
   /**
    * Filters out noise in the depth image using a box filter.

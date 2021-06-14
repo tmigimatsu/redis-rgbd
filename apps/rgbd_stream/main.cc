@@ -7,23 +7,28 @@
  * Authors: Toki Migimatsu
  */
 
+// std
+#include <csignal>    // std::signal, std::sig_atomic_t
+#include <exception>  // std::invalid_argument
+#include <iostream>   // std::cout
+
+// external
 #include <ctrl_utils/argparse.h>
+#include <ctrl_utils/eigen_string.h>
 #include <ctrl_utils/opencv.h>
 #include <ctrl_utils/redis_client.h>
 #include <ctrl_utils/thread_pool.h>
 #include <ctrl_utils/timer.h>
 #include <redis_rgbd/kinect2.h>
 
-#include <csignal>    // std::signal, std::sig_atomic_t
-#include <exception>  // std::invalid_argument
-#include <iostream>   // std::cout
+#include <Eigen/Eigen>
 
 namespace {
 
 volatile std::sig_atomic_t g_runloop = true;
 void Stop(int signal) { g_runloop = false; }
 
-enum class ImageType { Color, Depth };
+enum class DataType { ColorImage, DepthImage };
 
 struct Args : ctrl_utils::Args {
   explicit Args(ctrl_utils::Args&& args) : ctrl_utils::Args(std::move(args)) {}
@@ -54,6 +59,11 @@ struct Args : ctrl_utils::Args {
 
   int res_color = Kwarg<int>("res-color", 1080, "Color image resolution.");
 
+  bool register_depth =
+      Flag("register-depth", true,
+           "Streams the depth image registered to color. The depth image will "
+           "be the same size as the color image.");
+
   bool show_image = Flag("display", true, "Show image display.");
 
   bool use_redis_thread =
@@ -61,7 +71,38 @@ struct Args : ctrl_utils::Args {
 };
 
 /**
+ * Streams camera data using realtime callback functions.
+ */
+void StreamRealtime(const std::optional<Args>& args,
+                    std::unique_ptr<redis_rgbd::Camera>&& camera,
+                    ctrl_utils::RedisClient& redis) {
+  const std::string key_color = args->key_prefix + "color";
+  const std::string key_depth = args->key_prefix + "depth";
+
+  // Set up callbacks.
+  camera->SetColorCallback([&key_color, &redis](cv::Mat img) {
+    redis.set(key_color, img);
+    redis.commit();
+  });
+  camera->SetDepthCallback([key_depth, &redis](cv::Mat img) {
+    redis.set(key_depth, img);
+    redis.commit();
+  });
+
+  // Start listening.
+  camera->Start(args->color, args->depth);
+
+  // Spin loop with 100ms sleep interval until ctrl-c.
+  ctrl_utils::Timer timer(100);
+  while (g_runloop) {
+    timer.Sleep();
+  }
+}
+
+/**
  * Push items to the queue one at a time and then pop a group at a time.
+ *
+ * Used to process color and depth images in parallel and send them in a batch.
  */
 template <typename T>
 class BatchQueue : private ctrl_utils::AtomicBuffer<T> {
@@ -117,6 +158,230 @@ class BatchQueue : private ctrl_utils::AtomicBuffer<T> {
   size_t size_batch_;
 };
 
+/**
+ * Creates the lambda function for sending color and depth images to Redis.
+ */
+std::function<void()> CreateSendRedisFunction(
+    const std::optional<Args>& args, ctrl_utils::RedisClient& redis,
+    BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
+  return [key_color = args->key_prefix + "color",
+          key_depth = args->key_prefix + "depth", &redis, &redis_requests]() {
+    std::vector<std::pair<DataType, std::string>> batch = redis_requests.Pop();
+    for (std::pair<DataType, std::string>& type_val : batch) {
+      switch (type_val.first) {
+        case DataType::ColorImage:
+          redis.set(key_color, std::move(type_val.second));
+          break;
+        case DataType::DepthImage:
+          redis.set(key_depth, std::move(type_val.second));
+          break;
+      }
+    }
+    redis.commit();
+  };
+}
+
+/**
+ * Preallocates the color image according to the command line args and returns
+ * the associated intrinsic matrix.
+ */
+std::pair<cv::Mat, Eigen::Matrix3f> PrepareColorImage(
+    const std::optional<Args>& args,
+    const std::unique_ptr<redis_rgbd::Camera>& camera) {
+  Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>> color_intrinsic(
+      reinterpret_cast<float*>(camera->color_intrinsic_matrix().data));
+
+  // Unscaled color image.
+  if (args->res_color == camera->color_height()) {
+    return std::make_pair(cv::Mat(), color_intrinsic);
+  }
+
+  // Scaled color image.
+  const int rows = args->res_color;
+  const double scale = static_cast<double>(rows) / camera->color_height();
+  const int cols = camera->color_width() * scale + 0.5;
+  return std::make_pair(cv::Mat(rows, cols, CV_32FC1), scale * color_intrinsic);
+}
+
+/**
+ * Preallocates the depth image according to the command line args and returns
+ * the associated intrinsic matrix.
+ */
+std::pair<cv::Mat, Eigen::Matrix3f> PrepareDepthImage(
+    const std::optional<Args>& args,
+    const std::unique_ptr<redis_rgbd::Camera>& camera) {
+  // Unregistered depth image.
+  if (!args->register_depth) {
+    Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>>
+        depth_intrinsic(
+            reinterpret_cast<float*>(camera->depth_intrinsic_matrix().data));
+    return std::make_pair(cv::Mat(), depth_intrinsic);
+  }
+
+  Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>> color_intrinsic(
+      reinterpret_cast<float*>(camera->color_intrinsic_matrix().data));
+
+  // Unscaled registered depth image.
+  if (args->res_color == camera->color_height()) {
+    return std::make_pair(cv::Mat(), color_intrinsic);
+  }
+
+  // Scaled registered depth image.
+  const int rows = args->res_color;
+  const double scale = static_cast<double>(rows) / camera->color_height();
+  const int cols = camera->color_width() * scale + 0.5;
+  return std::make_pair(cv::Mat(rows, cols, CV_32FC1), scale * color_intrinsic);
+}
+
+/**
+ * Creates the lambda function for encoding and pushing a color image to the
+ * Redis queue.
+ */
+std::function<void()> CreateProcessColorFunction(
+    const std::optional<Args>& args,
+    const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_color,
+    BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
+  return [&args, &camera, &img_color, &redis_requests]() mutable {
+    // Get color image.
+    cv::Mat img_color_raw = camera->color_image();
+
+    if (args->res_color != camera->color_height()) {
+      // Resize image.
+      cv::resize(img_color_raw, img_color, img_color.size(), 0, 0,
+                 cv::INTER_CUBIC);
+    } else {
+      img_color = img_color_raw;
+    }
+
+    // Send image string.
+    redis_requests.Push(
+        std::make_pair(DataType::ColorImage, ctrl_utils::ToString(img_color)));
+  };
+}
+
+/**
+ * Creates the lambda function for encoding and pushing a depth image to the
+ * Redis queue.
+ */
+std::function<void()> CreateProcessDepthFunction(
+    const std::optional<Args>& args,
+    const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth,
+    BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
+  const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
+  return [&args, &camera, &img_depth, img_depth_reg = cv::Mat(), kinect2,
+          &redis_requests]() mutable {
+    // Get depth image.
+    cv::Mat img_depth_raw = camera->depth_image();
+
+    if (args->register_depth) {
+      // Register depth image.
+      kinect2->RegisterDepthToColor(img_depth_raw, img_depth_reg);
+
+      if (args->res_color != camera->color_height()) {
+        // Resize image.
+        cv::resize(img_depth_reg, img_depth, img_depth.size(), 0, 0,
+                   cv::INTER_CUBIC);
+      } else {
+        img_depth = img_depth_reg;
+      }
+    } else {
+      img_depth = img_depth_raw;
+    }
+
+    // Send image string.
+    redis_requests.Push(
+        std::make_pair(DataType::DepthImage, ctrl_utils::ToString(img_depth)));
+  };
+}
+
+/**
+ * Streams images at a fixed frequency.
+ */
+void StreamFps(const std::optional<Args>& args,
+               std::unique_ptr<redis_rgbd::Camera>&& camera,
+               ctrl_utils::RedisClient& redis) {
+  // Create Redis request queue.
+  const size_t size_batch = static_cast<size_t>(args->color) + args->depth;
+  BatchQueue<std::pair<DataType, std::string>> redis_requests(size_batch);
+
+  // Preallocate images and publish intrinsics to Redis.
+  auto [img_color, intrinsic_color] = PrepareColorImage(args, camera);
+  auto [img_depth, intrinsic_depth] = PrepareDepthImage(args, camera);
+  redis.set(args->key_prefix + "color::intrinsic", intrinsic_color);
+  redis.set(args->key_prefix + "depth::intrinsic", intrinsic_depth);
+  redis.commit();
+
+  // Create image processing functions.
+  std::function<void()> ProcessColor =
+      CreateProcessColorFunction(args, camera, img_color, redis_requests);
+  std::function<void()> ProcessDepth =
+      CreateProcessDepthFunction(args, camera, img_depth, redis_requests);
+
+  // Create thread pool.
+  ctrl_utils::ThreadPool<void> thread_pool(2);
+
+  // Create Redis send function.
+  const std::function<void()> SendRedis =
+      CreateSendRedisFunction(args, redis, redis_requests);
+  std::thread redis_thread;
+  if (args->use_redis_thread) {
+    // Start Redis thread if specified.
+    redis_thread = std::thread([&SendRedis]() {
+      while (g_runloop) SendRedis();
+    });
+  }
+
+  // Start listening.
+  camera->Start(args->color, args->depth);
+
+  // Send frames at given fps.
+  ctrl_utils::Timer timer(args->fps);
+  while (g_runloop) {
+    timer.Sleep();
+
+    // Request frames.
+    std::future<void> fut_color, fut_depth;
+    if (args->color) {
+      fut_color = thread_pool.Submit(ProcessColor);
+    }
+    if (args->depth) {
+      fut_depth = thread_pool.Submit(ProcessDepth);
+    }
+
+    // Wait for results.
+    if (args->color) {
+      fut_color.wait();
+    }
+    if (args->depth) {
+      fut_depth.wait();
+    }
+
+    // Send frames.
+    if (!args->use_redis_thread) {
+      SendRedis();
+    }
+
+    std::cout << timer.num_iters() << ": " << timer.time_elapsed() << "s "
+              << timer.average_freq() << "Hz" << std::endl;
+
+    if (args->show_image) {
+      if (args->color) {
+        cv::imshow("Color", img_color);
+      }
+      if (args->depth) {
+        cv::imshow("Depth", img_depth);
+      }
+      cv::waitKey(1);
+    }
+  }
+
+  // Terminate Redis requests.
+  redis_requests.Terminate();
+  if (redis_thread.joinable()) {
+    redis_thread.join();
+  }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -125,7 +390,6 @@ int main(int argc, char* argv[]) {
   std::optional<Args> args = ctrl_utils::ParseArgs<Args>(argc, argv);
   if (!args.has_value()) return 1;
   std::cout << args->help_string() << std::endl << *args << std::endl;
-
 
   // Connect to camera.
   std::cout << "Connecting to " << args->camera;
@@ -154,153 +418,12 @@ int main(int argc, char* argv[]) {
   redis.connect(args->redis_host, args->redis_port, args->redis_pass);
   std::cout << "Done." << std::endl;
 
-  const std::string key_color = args->key_prefix + "color";
-  const std::string key_depth = args->key_prefix + "depth";
-
   // Start streaming.
   std::cout << "Streaming..." << std::endl;
   if (args->fps == 0) {
-    // Set up callbacks.
-    camera->SetColorCallback([&key_color, &redis](cv::Mat img) {
-      redis.set(key_color, img);
-      redis.commit();
-    });
-    camera->SetDepthCallback([key_depth, &redis](cv::Mat img) {
-      redis.set(key_depth, img);
-      redis.commit();
-    });
-
-    // Start listening.
-    camera->Start(args->color, args->depth);
-
-    // Spin loop with 100ms sleep interval until ctrl-c.
-    ctrl_utils::Timer timer(100);
-    while (g_runloop) {
-      timer.Sleep();
-    }
+    StreamRealtime(args, std::move(camera), redis);
   } else {
-    // Create Redis request queue.
-    const size_t size_batch = static_cast<size_t>(args->color) + args->depth;
-    BatchQueue<std::pair<ImageType, std::string>> redis_requests(size_batch);
-
-    // Create Redis send function.
-    std::function<void()> SendRedis = [&key_color, &key_depth, &redis,
-                                       &redis_requests]() {
-      std::vector<std::pair<ImageType, std::string>> batch =
-          redis_requests.Pop();
-      for (std::pair<ImageType, std::string>& type_val : batch) {
-        switch (type_val.first) {
-          case ImageType::Color:
-            redis.set(key_color, std::move(type_val.second));
-            break;
-          case ImageType::Depth:
-            redis.set(key_depth, std::move(type_val.second));
-            break;
-        }
-      }
-      redis.commit();
-    };
-
-    // Create thread pool.
-    ctrl_utils::ThreadPool<void> thread_pool(2);
-
-    // Preallocate images.
-    const int rows = args->res_color;
-    const double scale = static_cast<double>(rows) / camera->color_height();
-    const int cols = camera->color_width() * scale + 0.5;
-    cv::Mat img_color, img_depth;
-    cv::Mat img_color_scaled(rows, cols, CV_8UC3);
-
-    // Create color retrieval function.
-    std::function<void()> ProcessColor = [&camera, &img_color,
-                                          &img_color_scaled, &key_color,
-                                          &redis_requests]() {
-      // Get color image.
-      img_color = camera->color_image();
-
-      // Resize image.
-      if (img_color_scaled.rows != img_color.rows) {
-        cv::resize(img_color, img_color_scaled, img_color_scaled.size(), 0, 0,
-                   cv::INTER_CUBIC);
-
-        // Send scaled color image.
-        redis_requests.Push(std::make_pair(
-            ImageType::Color, ctrl_utils::ToString(img_color_scaled)));
-      } else {
-        // Send color image.
-        redis_requests.Push(
-            std::make_pair(ImageType::Color, ctrl_utils::ToString(img_color)));
-      }
-    };
-
-    // Create depth retrieval function.
-    std::function<void()> ProcessDepth = [&camera, &img_depth, &key_depth,
-                                          &redis_requests]() {
-      // Get depth image.
-      img_depth = camera->depth_image();
-
-      // Send image string.
-      redis_requests.Push(
-          std::make_pair(ImageType::Depth, ctrl_utils::ToString(img_depth)));
-    };
-
-    // Start Redis thread.
-    std::thread redis_thread;
-    if (args->use_redis_thread) {
-      redis_thread = std::thread([&SendRedis]() {
-        while (g_runloop) SendRedis();
-      });
-    }
-
-    // Start listening.
-    camera->Start(args->color, args->depth);
-
-    // Send frames at given fps.
-    ctrl_utils::Timer timer(args->fps);
-    while (g_runloop) {
-      timer.Sleep();
-
-      // Request frames.
-      std::future<void> fut_color, fut_depth;
-      if (args->color) {
-        fut_color = thread_pool.Submit(ProcessColor);
-      }
-      if (args->depth) {
-        fut_depth = thread_pool.Submit(ProcessDepth);
-      }
-
-      // Wait for results.
-      if (args->color) {
-        fut_color.wait();
-      }
-      if (args->depth) {
-        fut_depth.wait();
-      }
-
-      // Send frames.
-      if (!args->use_redis_thread) {
-        SendRedis();
-      }
-
-      std::cout << timer.num_iters() << ": " << timer.time_elapsed() << "s "
-                << timer.average_freq() << "Hz" << std::endl;
-
-      if (args->show_image) {
-        if (args->color) {
-          cv::imshow("Color", img_color);
-        }
-        if (args->depth) {
-          cv::imshow("Depth", img_depth);
-        }
-        cv::waitKey(1);
-      }
-    }
-
-    // Terminate Redis requests.
-    redis_requests.Terminate();
-    if (redis_thread.joinable()) {
-      redis_thread.join();
-    }
+    StreamFps(args, std::move(camera), redis);
   }
 
   return 0;
