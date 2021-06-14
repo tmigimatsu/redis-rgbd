@@ -15,11 +15,15 @@ target_compile_features(rgbd_stream PUBLIC cxx_std_17)
 set_target_properties(rgbd_stream PROPERTIES CXX_EXTENSIONS OFF)
 
 ctrl_utils_add_subdirectory(Eigen3)
+ctrl_utils_add_subdirectory(nlohmann_json)
+lib_add_subdirectory(redis_gl)
 target_link_libraries(rgbd_stream
   PRIVATE
     ctrl_utils::ctrl_utils
     cpp_redis::cpp_redis
     Eigen3::Eigen
+    nlohmann_json::nlohmann_json # TODO: Should be handled by redis_gl
+    redis_gl::redis_gl
     redis_rgbd::redis_rgbd
 )
 

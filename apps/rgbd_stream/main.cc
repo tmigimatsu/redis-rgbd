@@ -19,6 +19,7 @@
 #include <ctrl_utils/redis_client.h>
 #include <ctrl_utils/thread_pool.h>
 #include <ctrl_utils/timer.h>
+#include <redis_gl/redis_gl.h>
 #include <redis_rgbd/kinect2.h>
 
 #include <Eigen/Eigen>
@@ -71,6 +72,27 @@ struct Args : ctrl_utils::Args {
 
   bool verbose = Flag("verbose", false, "Print streaming frame rate.");
 };
+
+/**
+ * Registers the camera in redis-gl.
+ */
+void RegisterRedisGl(const std::optional<Args>& args,
+                     ctrl_utils::RedisClient& redis) {
+  const redis_gl::simulator::ModelKeys model_keys("rgbd");
+  redis_gl::simulator::CameraModel camera_model;
+  size_t idx_camera_name = args->key_prefix.find("::");
+  if (idx_camera_name == std::string::npos) {
+    camera_model.name = idx_camera_name;
+  } else {
+    camera_model.name = args->key_prefix.substr(idx_camera_name + 2);
+  }
+  camera_model.key_pos = args->key_prefix + "pos";
+  camera_model.key_ori = args->key_prefix + "ori";
+  camera_model.key_intrinsic = args->key_prefix + "color::intrinsic";
+  camera_model.key_depth_image = args->key_prefix + "depth";
+  camera_model.key_rgb_image = args->key_prefix + "color";
+  redis_gl::simulator::RegisterCamera(redis, model_keys, camera_model, true);
+}
 
 /**
  * Streams camera data using realtime callback functions.
@@ -427,6 +449,9 @@ int main(int argc, char* argv[]) {
   ctrl_utils::RedisClient redis;
   redis.connect(args->redis_host, args->redis_port, args->redis_pass);
   std::cout << "Done." << std::endl;
+
+  // Register camera in redis-gl.
+  RegisterRedisGl(args, redis);
 
   // Start streaming.
   std::cout << "Streaming..." << std::endl;
