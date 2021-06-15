@@ -32,7 +32,12 @@ void Stop(int signal) { g_runloop = false; }
 enum class DataType { ColorImage, DepthImage };
 
 struct Args : ctrl_utils::Args {
-  explicit Args(ctrl_utils::Args&& args) : ctrl_utils::Args(std::move(args)) {}
+  explicit Args(ctrl_utils::Args&& args)
+      : ctrl_utils::Args(std::move(args)), description_(CreateDescription()) {
+    key_prefix = "rgbd::" + camera_name + "::";
+  }
+
+  virtual std::string_view description() const override { return description_; }
 
   std::string camera =
       Arg<std::string>("camera", "One of {kinect, kinect2, realsense}.");
@@ -48,8 +53,8 @@ struct Args : ctrl_utils::Args {
   std::string redis_pass =
       Kwarg<std::string>("a,redis-pass", "", "Redis password.");
 
-  std::string key_prefix =
-      Kwarg<std::string>("prefix", "rgbd::camera_0::", "Redis key prefix.");
+  std::string camera_name = Kwarg<std::string>(
+      "camera-name", "camera_0", "Camera name for the Redis key.");
 
   int fps = Kwarg<int>("fps", 30,
                        "Streaming fps (0 = realtime, limited by the camera).");
@@ -65,12 +70,36 @@ struct Args : ctrl_utils::Args {
            "Streams the depth image registered to color. The depth image will "
            "be the same size as the color image.");
 
+  bool filter_depth =
+      Flag("filter-depth", false, "Filter the depth image using a box filter.");
+
   bool show_image = Flag("display", true, "Show image display.");
 
   bool use_redis_thread =
       Flag("redis-thread", false, "Run Redis in a separate thread.");
 
   bool verbose = Flag("verbose", false, "Print streaming frame rate.");
+
+  std::string key_prefix;
+
+ private:
+  static std::string CreateDescription() {
+    std::stringstream ss;
+    ss << "Stream color and depth images to Redis." << std::endl
+       << std::endl
+       << "Used Redis keys:" << std::endl
+       << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::color"
+       << ctrl_utils::normal << ": OpenCV color image." << std::endl
+       << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::depth"
+       << ctrl_utils::normal << ": OpenCV depth image." << std::endl
+       << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::color::intrinsic"
+       << ctrl_utils::normal << ": Color intrinsic matrix." << std::endl
+       << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::depth::intrinsic"
+       << ctrl_utils::normal << ": Depth intrinsic matrix.";
+    return ss.str();
+  }
+
+  std::string description_;
 };
 
 /**
@@ -80,18 +109,16 @@ void RegisterRedisGl(const std::optional<Args>& args,
                      ctrl_utils::RedisClient& redis) {
   const redis_gl::simulator::ModelKeys model_keys("rgbd");
   redis_gl::simulator::CameraModel camera_model;
-  size_t idx_camera_name = args->key_prefix.find("::");
-  if (idx_camera_name == std::string::npos) {
-    camera_model.name = idx_camera_name;
-  } else {
-    camera_model.name = args->key_prefix.substr(idx_camera_name + 2);
-  }
+  camera_model.name = args->camera_name;
   camera_model.key_pos = args->key_prefix + "pos";
   camera_model.key_ori = args->key_prefix + "ori";
   camera_model.key_intrinsic = args->key_prefix + "color::intrinsic";
   camera_model.key_depth_image = args->key_prefix + "depth";
-  camera_model.key_rgb_image = args->key_prefix + "color";
-  redis_gl::simulator::RegisterCamera(redis, model_keys, camera_model, true);
+  camera_model.key_color_image = args->key_prefix + "color";
+
+  redis_gl::simulator::RegisterModelKeys(redis, model_keys);
+  redis_gl::simulator::RegisterCamera(redis, model_keys, camera_model);
+  redis.commit();
 }
 
 /**
@@ -294,10 +321,15 @@ std::function<void()> CreateProcessDepthFunction(
     const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
   const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
-  return [&args, &camera, &img_depth, img_depth_reg = cv::Mat(), kinect2,
-          &redis_requests]() mutable {
+  return [&args, &camera, &img_depth, img_depth_reg = cv::Mat(),
+          img_depth_blur = cv::Mat(), kinect2, &redis_requests]() mutable {
     // Get depth image.
     cv::Mat img_depth_raw = camera->depth_image();
+
+    if (args->filter_depth) {
+      cv::medianBlur(img_depth_raw, img_depth_blur, 5);
+      img_depth_raw = img_depth_blur;
+    }
 
     if (args->register_depth) {
       // Register depth image.
@@ -460,8 +492,6 @@ int main(int argc, char* argv[]) {
   } else {
     StreamFps(args, std::move(camera), redis);
   }
-
-  std::cout << std::endl << "Shutting down camera..." << std::endl;
 
   return 0;
 }
