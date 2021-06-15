@@ -112,7 +112,7 @@ void RegisterRedisGl(const std::optional<Args>& args,
   camera_model.name = args->camera_name;
   camera_model.key_pos = args->key_prefix + "pos";
   camera_model.key_ori = args->key_prefix + "ori";
-  camera_model.key_intrinsic = args->key_prefix + "color::intrinsic";
+  camera_model.key_intrinsic = args->key_prefix + "depth::intrinsic";
   camera_model.key_depth_image = args->key_prefix + "depth";
   camera_model.key_color_image = args->key_prefix + "color";
 
@@ -263,27 +263,36 @@ std::pair<cv::Mat, Eigen::Matrix3f> PrepareColorImage(
 std::pair<cv::Mat, Eigen::Matrix3f> PrepareDepthImage(
     const std::optional<Args>& args,
     const std::unique_ptr<redis_rgbd::Camera>& camera) {
+  const Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>>
+      depth_intrinsic(
+          reinterpret_cast<float*>(camera->depth_intrinsic_matrix().data));
+
   // Unregistered depth image.
   if (!args->register_depth) {
-    Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>>
-        depth_intrinsic(
-            reinterpret_cast<float*>(camera->depth_intrinsic_matrix().data));
     return std::make_pair(cv::Mat(), depth_intrinsic);
   }
 
-  Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>> color_intrinsic(
-      reinterpret_cast<float*>(camera->color_intrinsic_matrix().data));
+  const Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>>
+      color_intrinsic(
+          reinterpret_cast<float*>(camera->color_intrinsic_matrix().data));
+  Eigen::Matrix3f depth_reg_intrinsic = color_intrinsic;
+  // const Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>>
+  //     depth_to_color_intrinsic(
+  //         redis_rgbd::Kinect2::kDepthToColorIntrinsicMatrix.data());
+  // Eigen::Matrix3f depth_reg_intrinsic =
+  //     depth_to_color_intrinsic * depth_intrinsic;
 
   // Unscaled registered depth image.
   if (args->res_color == camera->color_height()) {
-    return std::make_pair(cv::Mat(), color_intrinsic);
+    return std::make_pair(cv::Mat(), depth_reg_intrinsic);
   }
 
   // Scaled registered depth image.
   const int rows = args->res_color;
   const double scale = static_cast<double>(rows) / camera->color_height();
+  depth_reg_intrinsic.topRows<2>() *= scale;
   const int cols = camera->color_width() * scale + 0.5;
-  return std::make_pair(cv::Mat(rows, cols, CV_32FC1), scale * color_intrinsic);
+  return std::make_pair(cv::Mat(rows, cols, CV_32FC1), depth_reg_intrinsic);
 }
 
 /**

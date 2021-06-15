@@ -228,7 +228,7 @@ class Kinect2 : public Camera {
    * `depth_image()`, which are flipped horizontally (as opposed
    * to the default selfie camera view given by the Kinect2 drivers).
    *
-   * @param depth 512 x 424 float32 depth image.
+   * @param depth 512 x 424 float32 undistorted depth image.
    * @param depth_out 1920 x 1080 float32 registered depth image. Will allocate
    *                  a new cv::Mat if it is not the correct shape.
    */
