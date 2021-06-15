@@ -122,6 +122,34 @@ void RegisterRedisGl(const std::optional<Args>& args,
 }
 
 /**
+ * Converts camera zyx euler angles to quaternion.
+ */
+void CameraEulerAnglesThread(const std::optional<Args>& args,
+                             ctrl_utils::RedisClient& redis) {
+  const std::string KEY_ORI = args->camera_name + "ori";
+  const std::string KEY_EULER_ZYX = KEY_ORI + "::euler_zyx";
+
+  {
+    // Initialize euler angle to quat.
+    const Eigen::Quaterniond quat = redis.sync_get<Eigen::Quaterniond>(KEY_ORI);
+    const Eigen::Vector3d euler_zyx = quat.matrix().eulerAngles(2, 1, 0);
+    redis.sync_set(KEY_EULER_ZYX, euler_zyx);
+  }
+
+  ctrl_utils::Timer timer(10);
+  while (g_runloop) {
+    timer.Sleep();
+    const Eigen::Vector3d euler_zyx =
+        redis.sync_get<Eigen::Vector3d>(KEY_EULER_ZYX);
+    const Eigen::Quaterniond quat =
+        Eigen::AngleAxisd(euler_zyx(0), Eigen::Vector3d::UnitZ()) *
+        Eigen::AngleAxisd(euler_zyx(1), Eigen::Vector3d::UnitY()) *
+        Eigen::AngleAxisd(euler_zyx(2), Eigen::Vector3d::UnitX());
+    redis.sync_set(KEY_ORI, quat);
+  }
+}
+
+/**
  * Streams camera data using realtime callback functions.
  */
 void StreamRealtime(const std::optional<Args>& args,
