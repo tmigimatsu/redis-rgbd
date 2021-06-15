@@ -124,11 +124,12 @@ void RegisterRedisGl(const std::optional<Args>& args,
 /**
  * Converts camera zyx euler angles to quaternion.
  */
-void CameraEulerAnglesThread(const std::optional<Args>& args,
-                             ctrl_utils::RedisClient& redis) {
-  const std::string KEY_ORI = args->camera_name + "ori";
+void CameraEulerAnglesThread(const Args* args) {
+  const std::string KEY_ORI = args->key_prefix + "ori";
   const std::string KEY_EULER_ZYX = KEY_ORI + "::euler_zyx";
 
+  ctrl_utils::RedisClient redis;
+  redis.connect(args->redis_host, args->redis_port, args->redis_pass);
   {
     // Initialize euler angle to quat.
     const Eigen::Quaterniond quat = redis.sync_get<Eigen::Quaterniond>(KEY_ORI);
@@ -529,6 +530,7 @@ int main(int argc, char* argv[]) {
 
   // Register camera in redis-gl.
   RegisterRedisGl(args, redis);
+  std::thread thread_camera_euler_angles(CameraEulerAnglesThread, &*args);
 
   // Start streaming.
   std::cout << "Streaming..." << std::endl;
@@ -537,6 +539,8 @@ int main(int argc, char* argv[]) {
   } else {
     StreamFps(args, std::move(camera), redis);
   }
+
+  thread_camera_euler_angles.join();
 
   return 0;
 }
