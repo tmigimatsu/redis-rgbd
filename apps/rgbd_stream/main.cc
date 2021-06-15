@@ -326,11 +326,6 @@ std::function<void()> CreateProcessDepthFunction(
     // Get depth image.
     cv::Mat img_depth_raw = camera->depth_image();
 
-    if (args->filter_depth) {
-      cv::medianBlur(img_depth_raw, img_depth_blur, 5);
-      img_depth_raw = img_depth_blur;
-    }
-
     if (args->register_depth) {
       // Register depth image.
       kinect2->RegisterDepthToColor(img_depth_raw, img_depth_reg);
@@ -338,12 +333,25 @@ std::function<void()> CreateProcessDepthFunction(
       if (args->res_color != camera->color_height()) {
         // Resize image.
         cv::resize(img_depth_reg, img_depth, img_depth.size(), 0, 0,
-                   cv::INTER_CUBIC);
+                   cv::INTER_NEAREST);
       } else {
         img_depth = img_depth_reg;
       }
     } else {
       img_depth = img_depth_raw;
+    }
+
+    if (args->filter_depth) {
+      cv::medianBlur(img_depth, img_depth_blur, 5);
+      for (int i = 0; i < img_depth_blur.rows; i++) {
+        for (int j = 0; j < img_depth_blur.cols; j++) {
+          float& d = img_depth_blur.at<float>(i, j);
+          if (d < 400 || d > 4000) {  // Range between 40cm, 400cm
+            d = 0;
+          }
+        }
+      }
+      img_depth = img_depth_blur;
     }
 
     // Send image string.
