@@ -45,6 +45,9 @@ static constexpr std::array<float, 9> kColorIntrinsicMatrix =
 static constexpr std::array<float, 9> kDepthIntrinsicMatrix =
     redis_rgbd::Kinect2::kDepthIntrinsicMatrix;
 
+static constexpr std::array<float, 9> kDepthToColorIntrinsicMatrix =
+    redis_rgbd::Kinect2::kDepthToColorIntrinsicMatrix;
+
 static constexpr std::array<float, 5> kDepthDistortionCoeffs =
     redis_rgbd::Kinect2::kDepthDistortionCoeffs;
 

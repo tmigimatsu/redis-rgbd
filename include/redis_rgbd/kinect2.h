@@ -92,6 +92,18 @@ class Kinect2 : public Camera {
       0.089108601212501526   //   k3 ]
   };
 
+  static constexpr std::array<float, 9> kDepthToColorIntrinsicMatrix = {
+      2.93,   // [[ fx ,
+      0,      //    0  ,
+      150.5,  //    cx ],
+      0,      //  [ 0  ,
+      2.93,   //    fy ,
+      -63.5,  //    cy ],
+      0,      //  [ 0 ,
+      0,      //    0 ,
+      1,      //    1 ]]
+  };
+
   explicit Kinect2(bool verbose = false);
 
   virtual ~Kinect2();
