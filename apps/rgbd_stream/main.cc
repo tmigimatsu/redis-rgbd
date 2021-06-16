@@ -29,7 +29,7 @@ namespace {
 volatile std::sig_atomic_t g_runloop = true;
 void Stop(int signal) { g_runloop = false; }
 
-enum class DataType { ColorImage, DepthImage };
+enum class DataType { ColorImage, DepthImage, RawColorImage };
 
 struct Args : ctrl_utils::Args {
   explicit Args(ctrl_utils::Args&& args)
@@ -65,6 +65,10 @@ struct Args : ctrl_utils::Args {
 
   int res_color = Kwarg<int>("res-color", 1080, "Color image resolution.");
 
+  bool raw_color = Flag("raw-color", false,
+                        "Additionally stream original high-res color "
+                        "image if --res-color is set.");
+
   bool register_depth =
       Flag("register-depth", false,
            "Streams the depth image registered to color. The depth image will "
@@ -90,6 +94,9 @@ struct Args : ctrl_utils::Args {
        << "Used Redis keys:" << std::endl
        << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::color"
        << ctrl_utils::normal << ": OpenCV color image." << std::endl
+       << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::color::high_res"
+       << ctrl_utils::normal << ": Original 1080p OpenCV color image."
+       << std::endl
        << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::depth"
        << ctrl_utils::normal << ": OpenCV depth image." << std::endl
        << "\t" << ctrl_utils::bold << "rgbd::<camera-name>::color::intrinsic"
@@ -261,7 +268,9 @@ std::function<void()> CreateSendRedisFunction(
     const std::optional<Args>& args, ctrl_utils::RedisClient& redis,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
   return [key_color = args->key_prefix + "color",
-          key_depth = args->key_prefix + "depth", &redis, &redis_requests]() {
+          key_depth = args->key_prefix + "depth",
+          key_color_raw = args->key_prefix + "color::high_res", &redis,
+          &redis_requests]() {
     std::vector<std::pair<DataType, std::string>> batch = redis_requests.Pop();
     for (std::pair<DataType, std::string>& type_val : batch) {
       switch (type_val.first) {
@@ -270,6 +279,9 @@ std::function<void()> CreateSendRedisFunction(
           break;
         case DataType::DepthImage:
           redis.set(key_depth, std::move(type_val.second));
+          break;
+        case DataType::RawColorImage:
+          redis.set(key_color_raw, std::move(type_val.second));
           break;
       }
     }
@@ -354,6 +366,12 @@ std::function<void()> CreateProcessColorFunction(
       // Resize image.
       cv::resize(img_color_raw, img_color, img_color.size(), 0, 0,
                  cv::INTER_CUBIC);
+
+      if (args->raw_color) {
+        // Send original resolution.
+        redis_requests.Push(std::make_pair(
+            DataType::RawColorImage, ctrl_utils::ToString(img_color_raw)));
+      }
     } else {
       img_color = img_color_raw;
     }
@@ -419,7 +437,11 @@ void StreamFps(const std::optional<Args>& args,
                std::unique_ptr<redis_rgbd::Camera>&& camera,
                ctrl_utils::RedisClient& redis) {
   // Create Redis request queue.
-  const size_t size_batch = static_cast<size_t>(args->color) + args->depth;
+  const size_t stream_color = args->color;
+  const size_t stream_depth = args->depth;
+  const size_t stream_raw =
+      args->res_color != camera->color_height() && args->raw_color;
+  const size_t size_batch = stream_color + stream_depth + stream_raw;
   BatchQueue<std::pair<DataType, std::string>> redis_requests(size_batch);
 
   // Preallocate images and publish intrinsics to Redis.

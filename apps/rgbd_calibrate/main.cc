@@ -126,6 +126,9 @@ int main(int argc, char* argv[]) {
 
   // Start calibration thread.
   std::thread thread_calibrate([&args, camera, &redis, &state]() {
+    const std::string KEY_POS = args->key_prefix_camera + "pos";
+    const std::string KEY_ORI = args->key_prefix_camera + "ori";
+
     std::vector<cv::Point3d> points_ee;
     std::vector<cv::Point2d> points_img;
 
@@ -177,8 +180,8 @@ int main(int argc, char* argv[]) {
       const Eigen::Quaterniond quat(T_camera_to_world.linear());
 
       // Send camera pose to Redis.
-      redis.set(args->key_prefix_camera + "pos", pos);
-      redis.set(args->key_prefix_camera + "ori", quat);
+      redis.set(KEY_POS, pos);
+      redis.set(KEY_ORI, quat);
       redis.commit();
 
       std::cout << "Done." << std::endl
@@ -192,10 +195,16 @@ int main(int argc, char* argv[]) {
         std::cout << point << std::endl;
       }
       std::cout << std::endl
-                << ctrl_utils::bold << "rvec: " << ctrl_utils::normal << rvec
+                << ctrl_utils::bold << "rvec" << ctrl_utils::normal << ": "
+                << rvec << std::endl
+                << ctrl_utils::bold << "tvec" << ctrl_utils::normal << ": "
+                << tvec << std::endl
                 << std::endl
-                << ctrl_utils::bold << "tvec: " << ctrl_utils::normal << tvec
-                << std::endl;
+                << "Sending to Redis:" << std::endl
+                << ctrl_utils::bold << KEY_POS << ctrl_utils::normal << ": "
+                << pos << std::endl
+                << ctrl_utils::bold << KEY_ORI << ctrl_utils::normal << ": "
+                << quat.coeffs() << std::endl;
     }
   });
 
