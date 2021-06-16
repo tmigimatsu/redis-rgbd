@@ -125,11 +125,25 @@ void RegisterRedisGl(const std::optional<Args>& args,
  * Converts camera zyx euler angles to quaternion.
  */
 void CameraEulerAnglesThread(const Args* args) {
+  const std::string KEY_POS = args->key_prefix + "pos";
   const std::string KEY_ORI = args->key_prefix + "ori";
   const std::string KEY_EULER_ZYX = KEY_ORI + "::euler_zyx";
 
   ctrl_utils::RedisClient redis;
   redis.connect(args->redis_host, args->redis_port, args->redis_pass);
+
+  // Set pose if it doesn't exist.
+  try {
+    const Eigen::Vector3d pos = redis.sync_get<Eigen::Vector3d>(KEY_POS);
+  } catch (...) {
+    redis.set<Eigen::Vector3d>(KEY_POS, Eigen::Vector3d::Zero());
+  }
+  try {
+    const Eigen::Quaterniond quat = redis.sync_get<Eigen::Quaterniond>(KEY_ORI);
+  } catch (...) {
+    redis.set<Eigen::Quaterniond>(KEY_ORI, Eigen::Quaterniond::Identity());
+  }
+
   {
     // Initialize euler angle to quat.
     const Eigen::Quaterniond quat = redis.sync_get<Eigen::Quaterniond>(KEY_ORI);

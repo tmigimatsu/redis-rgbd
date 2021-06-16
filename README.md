@@ -31,4 +31,8 @@ mkdir build
 cd build
 cmake ..
 make -j
+cd ..
+
+# Create udev rule for kinect2.
+cp external/libfreenect2/libfreenect2.git/platform/linux/udev/90-kinect2.rules /etc/udev/rules.d/
 ```
