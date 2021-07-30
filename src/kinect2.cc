@@ -238,13 +238,10 @@ class Kinect2::Kinect2Impl {
     std::binary_semaphore sem_depth_callback;
 
    private:
-    // Performs memcpy with the given mutex locked.
-    static void LockCopy(void* dest, const void* src, size_t bytes,
-                         std::mutex& mtx);
-
     // Color frame buffer populated by Kinect in `onNewFrame()`.
     std::vector<uint32_t> buffer_bgrx_kinect_;
     std::mutex mtx_bgrx_;
+    bool is_bgrx_updated_ = false;
 
     // Public-facing color frame buffer populated by user in `GetBgrxFrame()`.
     std::vector<uint32_t> buffer_bgrx_;
@@ -252,6 +249,7 @@ class Kinect2::Kinect2Impl {
     // Depth frame buffer populated by Kinect in `onNewFrame()`.
     std::vector<float> buffer_depth_kinect_;
     std::mutex mtx_depth_;
+    bool is_depth_updated_ = false;
 
     // Public-facing depth frame buffer populated by user in `GetDepthFrame()`.
     std::vector<float> buffer_depth_;
@@ -522,12 +520,19 @@ bool Kinect2::Kinect2Impl::FrameListener::onNewFrame(
 
   switch (type) {
     case libfreenect2::Frame::Type::Color:
-      LockCopy(buffer_bgrx_kinect_.data(), frame->data, kColorBytes, mtx_bgrx_);
+      {
+        std::lock_guard<std::mutex> lock(mtx_bgrx_);
+        std::memcpy(buffer_bgrx_kinect_.data(), frame->data, kColorBytes);
+        is_bgrx_updated_ = true;
+      }
       sem_color_callback.release();
       break;
     case libfreenect2::Frame::Type::Depth:
-      LockCopy(buffer_depth_kinect_.data(), frame->data, kDepthBytes,
-               mtx_depth_);
+      {
+        std::lock_guard<std::mutex> lock(mtx_depth_);
+        std::memcpy(buffer_depth_kinect_.data(), frame->data, kDepthBytes);
+        is_depth_updated_ = true;
+      }
       sem_depth_callback.release();
       break;
     default:
@@ -540,21 +545,20 @@ bool Kinect2::Kinect2Impl::FrameListener::onNewFrame(
 
 std::vector<uint32_t>& Kinect2::Kinect2Impl::FrameListener::GetBgrxFrame() {
   std::lock_guard<std::mutex> lock(mtx_bgrx_);
-  std::swap(buffer_bgrx_, buffer_bgrx_kinect_);
+  if (is_bgrx_updated_) {
+    std::swap(buffer_bgrx_, buffer_bgrx_kinect_);
+    is_bgrx_updated_ = false;
+  }
   return buffer_bgrx_;
 };
 
 std::vector<float>& Kinect2::Kinect2Impl::FrameListener::GetDepthFrame() {
   std::lock_guard<std::mutex> lock(mtx_depth_);
-  std::swap(buffer_depth_, buffer_depth_kinect_);
+  if (is_depth_updated_) {
+    std::swap(buffer_depth_, buffer_depth_kinect_);
+    is_depth_updated_ = false;
+  }
   return buffer_depth_;
 };
-
-void Kinect2::Kinect2Impl::FrameListener::LockCopy(void* dest, const void* src,
-                                                   size_t bytes,
-                                                   std::mutex& mtx) {
-  std::lock_guard<std::mutex> lock(mtx);
-  std::memcpy(dest, src, bytes);
-}
 
 }  // namespace redis_rgbd
