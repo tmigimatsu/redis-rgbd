@@ -480,6 +480,8 @@ void StreamFps(const std::optional<Args>& args,
   cv::Mat img_color_raw, img_depth_raw;
   redis.set(args->key_prefix + "color::intrinsic", intrinsic_color);
   redis.set(args->key_prefix + "depth::intrinsic", intrinsic_depth);
+  redis.set(args->key_prefix + "color::distortion", camera->color_distortion_coeffs());
+  redis.set(args->key_prefix + "depth::distortion", camera->depth_distortion_coeffs());
   redis.commit();
   cv::Mat img_depth_display;
 
