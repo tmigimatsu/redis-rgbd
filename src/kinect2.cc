@@ -218,14 +218,14 @@ class Kinect2::Kinect2Impl {
      *
      * Vector can be modified by the user until the next call to this function.
      */
-    std::vector<uint32_t>& GetBgrxFrame();
+    std::vector<uint32_t>* GetBgrxFrame();
 
     /**
      * Populates buffer_depth with the latest depth frame.
      *
      * Vector can be modified by the user until the next call to this function.
      */
-    std::vector<float>& GetDepthFrame();
+    std::vector<float>* GetDepthFrame();
 
     /**
      * Condition variable notified when new color frame is received.
@@ -482,12 +482,11 @@ void Kinect2::Kinect2Impl::SetDepthCallback(
 }
 
 cv::Mat Kinect2::Kinect2Impl::color_image() {
-  std::vector<uint32_t>& buffer_bgrx = listener_.GetBgrxFrame();
-  cv::Mat img_bgrx(kColorHeight, kColorWidth, CV_8UC4, buffer_bgrx.data());
-  cv::cvtColor(img_bgrx, img_bgr_, cv::COLOR_BGRA2BGR);
+  std::vector<uint32_t>* buffer_bgrx = listener_.GetBgrxFrame();
+  if (buffer_bgrx == nullptr) return img_bgr_flipped_;
 
-  // // Return a Mat wrapper without copying data.
-  // return img_bgr_;
+  cv::Mat img_bgrx(kColorHeight, kColorWidth, CV_8UC4, buffer_bgrx->data());
+  cv::cvtColor(img_bgrx, img_bgr_, cv::COLOR_BGRA2BGR);
 
   // Flip image around y-axis.
   cv::flip(img_bgr_, img_bgr_flipped_, 1);
@@ -497,11 +496,10 @@ cv::Mat Kinect2::Kinect2Impl::color_image() {
 }
 
 cv::Mat Kinect2::Kinect2Impl::depth_image() {
-  std::vector<float>& buffer_depth = listener_.GetDepthFrame();
-  cv::Mat img_depth(kDepthHeight, kDepthWidth, CV_32FC1, buffer_depth.data());
+  std::vector<float>* buffer_depth = listener_.GetDepthFrame();
+  if (buffer_depth == nullptr) return img_depth_flipped_;
 
-  // // Return a Mat wrapper without copying data.
-  // return img_depth;
+  cv::Mat img_depth(kDepthHeight, kDepthWidth, CV_32FC1, buffer_depth->data());
 
   // Flip image around y-axis.
   cv::flip(img_depth, img_depth_flipped_, 1);
@@ -519,20 +517,18 @@ bool Kinect2::Kinect2Impl::FrameListener::onNewFrame(
   if (!is_running_) return false;
 
   switch (type) {
-    case libfreenect2::Frame::Type::Color:
-      {
-        std::lock_guard<std::mutex> lock(mtx_bgrx_);
-        std::memcpy(buffer_bgrx_kinect_.data(), frame->data, kColorBytes);
-        is_bgrx_updated_ = true;
-      }
+    case libfreenect2::Frame::Type::Color: {
+      std::lock_guard<std::mutex> lock(mtx_bgrx_);
+      std::memcpy(buffer_bgrx_kinect_.data(), frame->data, kColorBytes);
+      is_bgrx_updated_ = true;
+    }
       sem_color_callback.release();
       break;
-    case libfreenect2::Frame::Type::Depth:
-      {
-        std::lock_guard<std::mutex> lock(mtx_depth_);
-        std::memcpy(buffer_depth_kinect_.data(), frame->data, kDepthBytes);
-        is_depth_updated_ = true;
-      }
+    case libfreenect2::Frame::Type::Depth: {
+      std::lock_guard<std::mutex> lock(mtx_depth_);
+      std::memcpy(buffer_depth_kinect_.data(), frame->data, kDepthBytes);
+      is_depth_updated_ = true;
+    }
       sem_depth_callback.release();
       break;
     default:
@@ -543,22 +539,23 @@ bool Kinect2::Kinect2Impl::FrameListener::onNewFrame(
   return false;
 }
 
-std::vector<uint32_t>& Kinect2::Kinect2Impl::FrameListener::GetBgrxFrame() {
+std::vector<uint32_t>* Kinect2::Kinect2Impl::FrameListener::GetBgrxFrame() {
   std::lock_guard<std::mutex> lock(mtx_bgrx_);
-  if (is_bgrx_updated_) {
-    std::swap(buffer_bgrx_, buffer_bgrx_kinect_);
-    is_bgrx_updated_ = false;
-  }
-  return buffer_bgrx_;
+  if (!is_bgrx_updated_) return nullptr;
+
+  std::swap(buffer_bgrx_, buffer_bgrx_kinect_);
+  is_bgrx_updated_ = false;
+  return &buffer_bgrx_;
 };
 
-std::vector<float>& Kinect2::Kinect2Impl::FrameListener::GetDepthFrame() {
+std::vector<float>* Kinect2::Kinect2Impl::FrameListener::GetDepthFrame() {
   std::lock_guard<std::mutex> lock(mtx_depth_);
-  if (is_depth_updated_) {
-    std::swap(buffer_depth_, buffer_depth_kinect_);
-    is_depth_updated_ = false;
-  }
-  return buffer_depth_;
+
+  if (!is_depth_updated_) return nullptr;
+
+  std::swap(buffer_depth_, buffer_depth_kinect_);
+  is_depth_updated_ = false;
+  return &buffer_depth_;
 };
 
 }  // namespace redis_rgbd
