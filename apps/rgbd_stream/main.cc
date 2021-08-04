@@ -9,7 +9,7 @@
 
 // std
 #include <csignal>    // std::signal, std::sig_atomic_t
-#include <ctime>
+#include <ctime>      // std::localtime, std::strftime, std::time_t
 #include <exception>  // std::invalid_argument
 #include <iostream>   // std::cout
 
@@ -357,27 +357,29 @@ std::pair<cv::Mat, Eigen::Matrix3f> PrepareDepthImage(
  */
 std::function<void()> CreateProcessColorFunction(
     const std::optional<Args>& args,
-    const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_color, cv::Mat& img_color_raw,
+    const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_color,
+    cv::Mat& img_color_raw,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
-  return [&args, &camera, &img_color, &img_color_raw, &redis_requests]() mutable {
-    if (args->res_color != camera->color_height()) {
-      // Resize image.
-      cv::resize(img_color_raw, img_color, img_color.size(), 0, 0,
-                 cv::INTER_CUBIC);
+  return
+      [&args, &camera, &img_color, &img_color_raw, &redis_requests]() mutable {
+        if (args->res_color != camera->color_height()) {
+          // Resize image.
+          cv::resize(img_color_raw, img_color, img_color.size(), 0, 0,
+                     cv::INTER_CUBIC);
 
-      if (args->raw_color) {
-        // Send original resolution.
-        redis_requests.Push(std::make_pair(
-            DataType::RawColorImage, ctrl_utils::ToString(img_color_raw)));
-      }
-    } else {
-      img_color = img_color_raw;
-    }
+          if (args->raw_color) {
+            // Send original resolution.
+            redis_requests.Push(std::make_pair(
+                DataType::RawColorImage, ctrl_utils::ToString(img_color_raw)));
+          }
+        } else {
+          img_color = img_color_raw;
+        }
 
-    // Send image string.
-    redis_requests.Push(
-        std::make_pair(DataType::ColorImage, ctrl_utils::ToString(img_color)));
-  };
+        // Send image string.
+        redis_requests.Push(std::make_pair(DataType::ColorImage,
+                                           ctrl_utils::ToString(img_color)));
+      };
 }
 
 /**
@@ -386,7 +388,8 @@ std::function<void()> CreateProcessColorFunction(
  */
 std::function<void()> CreateProcessDepthFunction(
     const std::optional<Args>& args,
-    const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth, cv::Mat& img_depth_raw,
+    const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth,
+    cv::Mat& img_depth_raw,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
   const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
   return [&args, &camera, &img_depth, &img_depth_raw, img_depth_reg = cv::Mat(),
@@ -430,12 +433,14 @@ std::function<void()> CreateProcessDepthFunction(
  */
 std::function<void()> CreateRecordColorFunction(
     const std::optional<Args>& args,
-    const std::unique_ptr<redis_rgbd::Camera>& camera, const std::string& filename, cv::Mat& img_color_raw
-    ) {
+    const std::unique_ptr<redis_rgbd::Camera>& camera,
+    const std::string& filename, cv::Mat& img_color_raw) {
   const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
-  return [&img_color_raw, video=cv::VideoWriter(filename, cv::VideoWriter::fourcc('X','2','6','4'), args->fps, cv::Size(camera->color_width(), camera->color_height()), true)]() mutable {
-    video.write(img_color_raw);
-  };
+  return [&img_color_raw,
+          video = cv::VideoWriter(
+              filename, cv::VideoWriter::fourcc('X', '2', '6', '4'), args->fps,
+              cv::Size(camera->color_width(), camera->color_height()),
+              true)]() mutable { video.write(img_color_raw); };
 }
 
 /**
@@ -444,20 +449,32 @@ std::function<void()> CreateRecordColorFunction(
  */
 std::function<void()> CreateRecordDepthFunction(
     const std::optional<Args>& args,
-    const std::unique_ptr<redis_rgbd::Camera>& camera, const std::string& filename, cv::Mat& img_depth_raw
-    ) {
+    const std::unique_ptr<redis_rgbd::Camera>& camera,
+    const std::string& filename, cv::Mat& img_depth_raw) {
   const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
   const int W = camera->depth_width();
   const int H = camera->depth_height();
-  return [&img_depth_raw, video=cv::VideoWriter(filename, cv::VideoWriter::fourcc('F','F','V','1'), args->fps, cv::Size(W, H), false), W, H, img_scaled = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(H, W), img_uint8 = Eigen::Array<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(H, W)]() mutable {
-    if (img_depth_raw.data == nullptr) return;
-    const Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> img(reinterpret_cast<float*>(img_depth_raw.data), H,W);
-    img_scaled = (255.f / 4000.f) * img;
-    img_scaled += 0.5f;
-    img_uint8 = img_scaled.cast<uint8_t>();
-    cv::Mat cv_img_uint8(H, W, CV_8UC1, img_uint8.data());
-    video.write(cv_img_uint8);
-  };
+  return
+      [&img_depth_raw,
+       video = cv::VideoWriter(filename,
+                               cv::VideoWriter::fourcc('F', 'F', 'V', '1'),
+                               args->fps, cv::Size(W, H), false),
+       W, H,
+       img_scaled =
+           Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(
+               H, W),
+       img_uint8 = Eigen::Array<uint8_t, Eigen::Dynamic, Eigen::Dynamic,
+                                Eigen::RowMajor>(H, W)]() mutable {
+        if (img_depth_raw.data == nullptr) return;
+        const Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic,
+                                             Eigen::Dynamic, Eigen::RowMajor>>
+            img(reinterpret_cast<float*>(img_depth_raw.data), H, W);
+        img_scaled = (255.f / 4000.f) * img;
+        img_scaled += 0.5f;
+        img_uint8 = img_scaled.cast<uint8_t>();
+        cv::Mat cv_img_uint8(H, W, CV_8UC1, img_uint8.data());
+        video.write(cv_img_uint8);
+      };
 }
 
 /**
@@ -480,19 +497,26 @@ void StreamFps(const std::optional<Args>& args,
   cv::Mat img_color_raw, img_depth_raw;
   redis.set(args->key_prefix + "color::intrinsic", intrinsic_color);
   redis.set(args->key_prefix + "depth::intrinsic", intrinsic_depth);
-  redis.set(args->key_prefix + "color::distortion", camera->color_distortion_coeffs());
-  redis.set(args->key_prefix + "depth::distortion", camera->depth_distortion_coeffs());
+  const Eigen::Map<const Eigen::VectorXf> color_distortion(
+      camera->color_distortion_coeffs().data(),
+      camera->color_distortion_coeffs().size());
+  const Eigen::Map<const Eigen::VectorXf> depth_distortion(
+      camera->depth_distortion_coeffs().data(),
+      camera->depth_distortion_coeffs().size());
+  redis.set(args->key_prefix + "color::distortion", color_distortion);
+  redis.set(args->key_prefix + "depth::distortion", depth_distortion);
   redis.commit();
   cv::Mat img_depth_display;
 
   // Create image processing functions.
-  std::function<void()> ProcessColor =
-      CreateProcessColorFunction(args, camera, img_color, img_color_raw, redis_requests);
-  std::function<void()> ProcessDepth =
-      CreateProcessDepthFunction(args, camera, img_depth, img_depth_raw, redis_requests);
+  std::function<void()> ProcessColor = CreateProcessColorFunction(
+      args, camera, img_color, img_color_raw, redis_requests);
+  std::function<void()> ProcessDepth = CreateProcessDepthFunction(
+      args, camera, img_depth, img_depth_raw, redis_requests);
   char str_time[100];
   std::time_t t = std::time(nullptr);
-  std::strftime(str_time, sizeof(str_time), "%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+  std::strftime(str_time, sizeof(str_time), "%Y-%m-%d_%H-%M-%S",
+                std::localtime(&t));
   const std::string filename_color = std::string(str_time) + "_color.mkv";
   const std::string filename_depth = std::string(str_time) + "_depth.mkv";
 
