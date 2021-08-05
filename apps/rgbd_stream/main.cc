@@ -307,9 +307,12 @@ std::pair<cv::Mat, Eigen::Matrix3f> PrepareColorImage(
 
   // Scaled color image.
   const int rows = args->res_color;
-  const double scale = static_cast<double>(rows) / camera->color_height();
-  const int cols = camera->color_width() * scale + 0.5;
-  return std::make_pair(cv::Mat(rows, cols, CV_32FC1), scale * color_intrinsic);
+  const double scale_h = static_cast<double>(rows) / camera->color_height();
+  const int cols = camera->color_width() * scale_h + 0.5;
+  const double scale_w = static_cast<double>(cols) / camera->color_width();
+  const Eigen::DiagonalMatrix<float, 3> intrinsic_scale(scale_w, scale_h, 1.);
+  return std::make_pair(cv::Mat(rows, cols, CV_32FC1),
+                        intrinsic_scale * color_intrinsic);
 }
 
 /**
