@@ -17,12 +17,13 @@ namespace {
 
 static constexpr size_t kColorHeight = redis_rgbd::RealSense::kColorHeight;
 static constexpr size_t kColorWidth = redis_rgbd::RealSense::kColorWidth;
-static constexpr size_t kColorBytes = kColorHeight * kColorWidth * 3;
+static constexpr size_t kColorSize = kColorHeight * kColorWidth * 3;
+static constexpr size_t kColorBytes = kColorSize * sizeof(uint8_t);
 
 static constexpr size_t kDepthHeight = redis_rgbd::RealSense::kDepthHeight;
 static constexpr size_t kDepthWidth = redis_rgbd::RealSense::kDepthWidth;
-static constexpr size_t kDepthBytes =
-    kDepthHeight * kDepthWidth * sizeof(float);
+static constexpr size_t kDepthSize = kDepthHeight * kDepthWidth;
+static constexpr size_t kDepthBytes = kDepthSize * sizeof(uint16_t);
 }  // namespace
 
 namespace redis_rgbd {
@@ -37,14 +38,14 @@ class RealSense::RealSenseImpl {
 
   void Stop();
 
-  void ReceiveColor(const rs2::frame& frame);
+  void ReceiveColor(const rs2::video_frame& frame);
 
-  void ReceiveDepth(const rs2::frame& frame);
+  void ReceiveDepth(const rs2::depth_frame& frame);
 
   void ListenFrames();
 
   std::vector<uint8_t>* GetColorFrame();
-  std::vector<float>* GetDepthFrame();
+  std::vector<uint16_t>* GetDepthFrame();
 
   /**
    * Returns a container around locally-stored BGR image data.
@@ -83,15 +84,15 @@ class RealSense::RealSenseImpl {
 
   std::mutex mtx_bgr_;
   std::vector<uint8_t> buffer_bgr_realsense_ =
-      std::vector<uint8_t>(kColorBytes);
+      std::vector<uint8_t>(kColorSize);
   bool is_bgr_updated_ = false;
 
   std::mutex mtx_depth_;
-  std::vector<float> buffer_depth_realsense_ = std::vector<float>(kDepthBytes);
+  std::vector<uint16_t> buffer_depth_realsense_ = std::vector<uint16_t>(kDepthSize);
   bool is_depth_updated_ = false;
 
-  std::vector<uint8_t> buffer_bgr_ = std::vector<uint8_t>(kColorBytes);
-  std::vector<float> buffer_depth_ = std::vector<float>(kDepthBytes);
+  std::vector<uint8_t> buffer_bgr_ = std::vector<uint8_t>(kColorSize);
+  std::vector<uint16_t> buffer_depth_ = std::vector<uint16_t>(kDepthSize);
 
   std::array<float, 9> color_intrinsic_matrix_;
   std::array<float, 5> color_distortion_coeffs_;
@@ -100,6 +101,7 @@ class RealSense::RealSenseImpl {
   std::array<float, 5> depth_distortion_coeffs_;
 
   float depth_scale_;
+  cv::Mat img_depth_ = cv::Mat(kDepthHeight, kDepthWidth, CV_32FC1);
 };
 
 const cv::Mat& RealSense::color_intrinsic_matrix() const {
@@ -168,9 +170,6 @@ void RealSense::RealSenseImpl::Start(bool color, bool depth) {
   cfg_.enable_stream(RS2_STREAM_DEPTH, -1, kDepthWidth, kDepthHeight,
                      RS2_FORMAT_Z16);
 
-  runloop_ = true;
-  frame_thread_ = std::thread(&RealSense::RealSenseImpl::ListenFrames, this);
-
   const rs2::pipeline_profile profile = pipe_.start(cfg_);
 
   const rs2::video_stream_profile color_stream =
@@ -202,6 +201,9 @@ void RealSense::RealSenseImpl::Start(bool color, bool depth) {
                              1.};
   std::memcpy(depth_distortion_coeffs_.data(), depth_intrinsics.coeffs,
               sizeof depth_intrinsics.coeffs);
+
+  runloop_ = true;
+  frame_thread_ = std::thread(&RealSense::RealSenseImpl::ListenFrames, this);
 }
 
 void RealSense::Stop() { impl_->Stop(); }
@@ -212,16 +214,16 @@ void RealSense::RealSenseImpl::Stop() {
   pipe_.stop();
 }
 
-void RealSense::RealSenseImpl::ReceiveColor(const rs2::frame& frame) {
+void RealSense::RealSenseImpl::ReceiveColor(const rs2::video_frame& frame) {
   std::lock_guard<std::mutex> lock(mtx_bgr_);
   const uint8_t* buffer = reinterpret_cast<const uint8_t*>(frame.get_data());
   std::memcpy(buffer_bgr_realsense_.data(), buffer, kColorBytes);
   is_bgr_updated_ = true;
 }
 
-void RealSense::RealSenseImpl::ReceiveDepth(const rs2::frame& frame) {
+void RealSense::RealSenseImpl::ReceiveDepth(const rs2::depth_frame& frame) {
   std::lock_guard<std::mutex> lock(mtx_depth_);
-  const uint8_t* buffer = reinterpret_cast<const uint8_t*>(frame.get_data());
+  const uint16_t* buffer = reinterpret_cast<const uint16_t*>(frame.get_data());
   std::memcpy(buffer_depth_realsense_.data(), buffer, kDepthBytes);
   is_depth_updated_ = true;
 }
@@ -243,9 +245,9 @@ std::vector<uint8_t>* RealSense::RealSenseImpl::GetColorFrame() {
   return &buffer_bgr_;
 };
 
-std::vector<float>* RealSense::RealSenseImpl::GetDepthFrame() {
+std::vector<uint16_t>* RealSense::RealSenseImpl::GetDepthFrame() {
   std::lock_guard<std::mutex> lock(mtx_depth_);
-  if (!is_depth_updated_) return &buffer_depth_;
+  if (!is_depth_updated_) return nullptr;
 
   std::swap(buffer_depth_, buffer_depth_realsense_);
   is_depth_updated_ = false;
@@ -262,8 +264,12 @@ cv::Mat RealSense::RealSenseImpl::color_image() {
 cv::Mat RealSense::depth_image() const { return impl_->depth_image(); }
 
 cv::Mat RealSense::RealSenseImpl::depth_image() {
-  std::vector<float>* buffer_depth = GetDepthFrame();
-  return cv::Mat(kDepthHeight, kDepthWidth, CV_32FC1, buffer_depth->data());
+  std::vector<uint16_t>* buffer_depth = GetDepthFrame();
+  if (buffer_depth == nullptr) return img_depth_;
+
+  cv::Mat img_depth_u16 = cv::Mat(kDepthHeight, kDepthWidth, CV_16UC1, buffer_depth->data());
+  img_depth_u16.convertTo(img_depth_, CV_32FC1, depth_scale_);
+  return img_depth_;
 }
 
 }  // namespace redis_rgbd
