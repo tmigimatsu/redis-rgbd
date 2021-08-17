@@ -36,6 +36,7 @@ endif()
 target_sources(${LIB_NAME}
   PRIVATE
     kinect2.cc
+    realsense.cc
 )
 
 # Set include directories.
@@ -50,11 +51,13 @@ target_include_directories(${LIB_NAME}
 lib_add_subdirectory(ctrl_utils)
 ctrl_utils_add_subdirectory(OpenCV)
 lib_add_subdirectory(libfreenect2)
+lib_add_subdirectory(realsense2)
 target_link_libraries(${LIB_NAME}
   PUBLIC
     OpenCV::OpenCV
   PRIVATE
     openkinect::libfreenect2
+    realsense2::realsense2
     ctrl_utils::ctrl_utils
 )
 

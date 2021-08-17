@@ -10,3 +10,6 @@
 [submodule "external/redis_gl/redis-gl.git"]
 	path = external/redis_gl/redis-gl.git
 	url = https://github.com/tmigimatsu/redis-gl.git
+[submodule "external/realsense2/librealsense.git"]
+	path = external/realsense2/librealsense.git
+	url = https://github.com/IntelRealSense/librealsense.git

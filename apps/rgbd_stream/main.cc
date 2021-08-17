@@ -22,6 +22,7 @@
 #include <ctrl_utils/timer.h>
 #include <redis_gl/redis_gl.h>
 #include <redis_rgbd/kinect2.h>
+#include <redis_rgbd/realsense.h>
 
 #include <Eigen/Eigen>
 
@@ -394,12 +395,16 @@ std::function<void()> CreateProcessDepthFunction(
     const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth,
     cv::Mat& img_depth_raw,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
-  const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
   return [&args, &camera, &img_depth, &img_depth_raw, img_depth_reg = cv::Mat(),
-          img_depth_blur = cv::Mat(), kinect2, &redis_requests]() mutable {
+          img_depth_blur = cv::Mat(), &redis_requests]() mutable {
     if (args->register_depth) {
       // Register depth image.
-      kinect2->RegisterDepthToColor(img_depth_raw, img_depth_reg);
+      const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
+      if (kinect2 != nullptr) {
+        kinect2->RegisterDepthToColor(img_depth_raw, img_depth_reg);
+      } else {
+        img_depth_reg = img_depth_raw;
+      }
 
       if (args->res_color != camera->color_height()) {
         // Resize image.
@@ -438,7 +443,6 @@ std::function<void()> CreateRecordColorFunction(
     const std::optional<Args>& args,
     const std::unique_ptr<redis_rgbd::Camera>& camera,
     const std::string& filename, cv::Mat& img_color_raw) {
-  const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
   return [&img_color_raw,
           video = cv::VideoWriter(
               filename, cv::VideoWriter::fourcc('X', '2', '6', '4'), args->fps,
@@ -454,7 +458,6 @@ std::function<void()> CreateRecordDepthFunction(
     const std::optional<Args>& args,
     const std::unique_ptr<redis_rgbd::Camera>& camera,
     const std::string& filename, cv::Mat& img_depth_raw) {
-  const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
   const int W = camera->depth_width();
   const int H = camera->depth_height();
   return
@@ -624,6 +627,8 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<redis_rgbd::Camera> camera;
   if (args->camera == "kinect2") {
     camera = std::make_unique<redis_rgbd::Kinect2>(args->verbose);
+  } else if (args->camera == "realsense") {
+    camera = std::make_unique<redis_rgbd::RealSense>();
   } else {
     std::cerr << args->camera << " is not supported." << std::endl;
     return 1;
