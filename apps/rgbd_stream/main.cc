@@ -86,6 +86,8 @@ struct Args : ctrl_utils::Args {
 
   bool verbose = Flag("verbose", false, "Print streaming frame rate.");
 
+  float exp_comp = Kwarg<float>("exp_comp", 0.0, "Exposure compensation [-2.0, 2.0]");
+
   std::string key_prefix;
 
  private:
@@ -395,8 +397,8 @@ std::function<void()> CreateProcessDepthFunction(
     const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth,
     cv::Mat& img_depth_raw,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
-  return [&args, &camera, &img_depth, &img_depth_raw, img_depth_reg = cv::Mat(),
-          img_depth_blur = cv::Mat(), &redis_requests]() mutable {
+  return [&args, &camera, &img_depth, &img_depth_raw, &redis_requests, img_depth_reg = cv::Mat(),
+          img_depth_blur = cv::Mat()]() mutable {
     if (args->register_depth) {
       // Register depth image.
       const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
@@ -428,6 +430,12 @@ std::function<void()> CreateProcessDepthFunction(
         }
       }
       img_depth = img_depth_blur;
+    }
+
+    if (args->verbose) {
+      if (cv::countNonZero(img_depth) == 0) {
+        std::cout << "WARNING: Depth image is all zeros. Try moving the camera farther away." << std::endl;
+      }
     }
 
     // Send image string.
@@ -497,6 +505,9 @@ void StreamFps(const std::optional<Args>& args,
   const size_t size_batch = stream_color + stream_depth + stream_raw;
   BatchQueue<std::pair<DataType, std::string>> redis_requests(size_batch);
 
+  // Start listening to get intrinsics.
+  camera->Start(args->color, args->depth);
+
   // Preallocate images and publish intrinsics to Redis.
   auto [img_color, intrinsic_color] = PrepareColorImage(args, camera);
   auto [img_depth, intrinsic_depth] = PrepareDepthImage(args, camera);
@@ -545,8 +556,10 @@ void StreamFps(const std::optional<Args>& args,
     });
   }
 
-  // Start listening.
-  camera->Start(args->color, args->depth);
+  auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
+  if (kinect2 != nullptr) {
+    kinect2->SetAutoExposure(args->exp_comp);
+  }
 
   // Send frames at given fps.
   ctrl_utils::Timer timer(args->fps);

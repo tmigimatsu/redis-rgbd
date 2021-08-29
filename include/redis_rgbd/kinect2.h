@@ -255,6 +255,9 @@ class Kinect2 : public Camera {
    */
   static void FilterDepth(const cv::Mat& depth_reg, cv::Mat& depth);
 
+  void SetAutoExposure(float exposure_compensation);
+  void SetExposure(float integration_time_ms, float analog_gain);
+
  private:
   class Kinect2Impl;
   std::unique_ptr<Kinect2Impl> impl_;

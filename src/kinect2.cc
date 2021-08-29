@@ -174,6 +174,16 @@ class Kinect2::Kinect2Impl {
 
   void SetDepthCallback(std::function<void(cv::Mat)>&& callback);
 
+  void SetAutoExposure(float exposure_compensation) {
+    if (dev_ == nullptr) return;
+    dev_->setColorAutoExposure(exposure_compensation);
+  }
+
+  void SetExposure(float integration_time_ms, float analog_gain) {
+    if (dev_ == nullptr) return;
+    dev_->setColorManualExposure(integration_time_ms, analog_gain);
+  }
+
   /**
    * Returns a container around locally-stored BGR image data.
    */
@@ -279,6 +289,13 @@ class Kinect2::Kinect2Impl {
 /////////////
 
 const std::string Kinect2::kName = "kinect2";
+
+void Kinect2::SetAutoExposure(float exposure_compensation) {
+  impl_->SetAutoExposure(exposure_compensation);
+}
+void Kinect2::SetExposure(float integration_time_ms, float analog_gain) {
+  impl_->SetExposure(integration_time_ms, analog_gain);
+}
 
 Kinect2::Kinect2(bool verbose) {
   // Default verbosity is INFO.
