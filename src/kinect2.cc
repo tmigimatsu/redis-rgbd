@@ -151,7 +151,7 @@ static std::optional<std::array<int, 2>> DepthToColorIndices(int x_depth,
 
   const float rx = (map_x + (kShiftM / z)) * fx + cx;
   const int rx_int = rx + 0.5;
-  assert(rx_int >= 0 && rx_int < kColorWidth);
+  if (rx_int < 0 || rx_int >= kColorWidth) return {};  // Shouldn't happen.
 
   return {{rx_int, ry_int}};
 }
@@ -386,13 +386,19 @@ void Kinect2::RegisterDepthToColor(const cv::Mat& depth, cv::Mat& depth_out) {
       // Min box filter over color image.
       const int y_color = (*xy_color)[1];
       const int x_color = kColorWidth - (*xy_color)[0];
+
+      if (x_color <= kFilterWidthHalf ||
+          x_color >= kColorWidth - kFilterWidthHalf) {
+        // Shouldn't happen.
+        continue;
+      }
+
       for (int yy = -kFilterHeightHalf; yy <= kFilterHeightHalf; yy++) {
         const int yy_color = y_color + yy;
         if (yy_color < 0 || yy_color >= kColorHeight) continue;
 
         for (int xx = -kFilterWidthHalf; xx <= kFilterWidthHalf; xx++) {
           const int xx_color = x_color + xx;
-          assert(xx_color > 0 && xx_color < kColorWidth);
 
           // Set output pixel value to min z in window.
           float& zz = depth_out.at<float>(yy_color, xx_color);
