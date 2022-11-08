@@ -8,8 +8,8 @@
  */
 
 // std
-#include <csignal>    // std::signal, std::sig_atomic_t
-#include <ctime>      // std::localtime, std::strftime, std::time_t
+#include <csignal>  // std::signal, std::sig_atomic_t
+// #include <ctime>      // std::localtime, std::strftime, std::time_t
 #include <exception>  // std::invalid_argument
 #include <iostream>   // std::cout
 
@@ -86,7 +86,8 @@ struct Args : ctrl_utils::Args {
 
   bool verbose = Flag("verbose", false, "Print streaming frame rate.");
 
-  float exp_comp = Kwarg<float>("exp_comp", 0.0, "Exposure compensation [-2.0, 2.0]");
+  float exp_comp =
+      Kwarg<float>("exp_comp", 0.0, "Exposure compensation [-2.0, 2.0]");
 
   std::string key_prefix;
 
@@ -361,7 +362,7 @@ std::pair<cv::Mat, Eigen::Matrix3f> PrepareDepthImage(
  * Creates the lambda function for encoding and pushing a color image to the
  * Redis queue.
  */
-std::function<void()> CreateProcessColorFunction(
+std::function<void()> CreateEncodeColorFunction(
     const std::optional<Args>& args,
     const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_color,
     cv::Mat& img_color_raw,
@@ -392,13 +393,13 @@ std::function<void()> CreateProcessColorFunction(
  * Creates the lambda function for encoding and pushing a depth image to the
  * Redis queue.
  */
-std::function<void()> CreateProcessDepthFunction(
+std::function<void()> CreateEncodeDepthFunction(
     const std::optional<Args>& args,
     const std::unique_ptr<redis_rgbd::Camera>& camera, cv::Mat& img_depth,
     cv::Mat& img_depth_raw,
     BatchQueue<std::pair<DataType, std::string>>& redis_requests) {
-  return [&args, &camera, &img_depth, &img_depth_raw, &redis_requests, img_depth_reg = cv::Mat(),
-          img_depth_blur = cv::Mat()]() mutable {
+  return [&args, &camera, &img_depth, &img_depth_raw, &redis_requests,
+          img_depth_reg = cv::Mat(), img_depth_blur = cv::Mat()]() mutable {
     if (args->register_depth) {
       // Register depth image.
       const auto* kinect2 = dynamic_cast<redis_rgbd::Kinect2*>(camera.get());
@@ -434,7 +435,9 @@ std::function<void()> CreateProcessDepthFunction(
 
     if (args->verbose) {
       if (cv::countNonZero(img_depth) == 0) {
-        std::cout << "WARNING: Depth image is all zeros. Try moving the camera farther away." << std::endl;
+        std::cout << "WARNING: Depth image is all zeros. Try moving the camera "
+                     "farther away."
+                  << std::endl;
       }
     }
 
@@ -526,21 +529,14 @@ void StreamFps(const std::optional<Args>& args,
   cv::Mat img_depth_display;
 
   // Create image processing functions.
-  std::function<void()> ProcessColor = CreateProcessColorFunction(
+  std::function<void()> EncodeColor = CreateEncodeColorFunction(
       args, camera, img_color, img_color_raw, redis_requests);
-  std::function<void()> ProcessDepth = CreateProcessDepthFunction(
+  std::function<void()> EncodeDepth = CreateEncodeDepthFunction(
       args, camera, img_depth, img_depth_raw, redis_requests);
-  char str_time[100];
-  std::time_t t = std::time(nullptr);
-  std::strftime(str_time, sizeof(str_time), "%Y-%m-%d_%H-%M-%S",
-                std::localtime(&t));
-  const std::string filename_color = std::string(str_time) + "_color.mkv";
-  const std::string filename_depth = std::string(str_time) + "_depth.mkv";
 
-  std::function<void()> RecordColor =
-      CreateRecordColorFunction(args, camera, filename_color, img_color_raw);
-  std::function<void()> RecordDepth =
-      CreateRecordDepthFunction(args, camera, filename_depth, img_depth_raw);
+  std::string filename_recording;
+  std::function<void()> RecordColor, RecordDepth;
+  redis.sync_set("rgbd::camera_0::record", "");
 
   // Create thread pool.
   ctrl_utils::ThreadPool<void> thread_pool(4);
@@ -566,18 +562,45 @@ void StreamFps(const std::optional<Args>& args,
   while (g_runloop) {
     timer.Sleep();
 
+    // Check for Redis record request.
+    std::future<std::string> fut_record =
+        redis.get<std::string>("rgbd::camera_0::record");
+    redis.commit();
+
     // Request frames.
     std::future<void> fut_color, fut_depth;
     img_color_raw = camera->color_image();
     img_depth_raw = camera->depth_image();
     if (args->color) {
-      fut_color = thread_pool.Submit(ProcessColor);
+      fut_color = thread_pool.Submit(EncodeColor);
     }
     if (args->depth) {
-      fut_depth = thread_pool.Submit(ProcessDepth);
+      fut_depth = thread_pool.Submit(EncodeDepth);
     }
-    std::future<void> fut_color_record = thread_pool.Submit(RecordColor);
-    std::future<void> fut_depth_record = thread_pool.Submit(RecordDepth);
+
+    const std::string record_request = fut_record.get();
+    std::future<void> fut_color_record, fut_depth_record;
+    if (!record_request.empty()) {
+      if (record_request != filename_recording) {
+        // Create new recording.
+        filename_recording = record_request;
+
+        std::cout << "Recording " << filename_recording << "_{color,depth}.mkv..."
+                  << std::endl;
+
+        const std::string filename_color = filename_recording + "_color.mkv";
+        const std::string filename_depth = filename_recording + "_depth.mkv";
+
+        RecordColor = CreateRecordColorFunction(args, camera, filename_color,
+                                                img_color_raw);
+        RecordDepth = CreateRecordDepthFunction(args, camera, filename_depth,
+                                                img_depth_raw);
+      }
+
+      // Continue recording.
+      fut_color_record = thread_pool.Submit(RecordColor);
+      fut_depth_record = thread_pool.Submit(RecordDepth);
+    }
 
     // Wait for results.
     if (args->color) {
@@ -597,8 +620,16 @@ void StreamFps(const std::optional<Args>& args,
                 << timer.average_freq() << "Hz" << std::endl;
     }
 
-    fut_color_record.wait();
-    fut_depth_record.wait();
+    if (!record_request.empty()) {
+      fut_color_record.wait();
+      fut_depth_record.wait();
+    } else if (RecordColor) {
+      std::cout << "Saving " << filename_recording << "_{color,depth}.mkv..."
+                << std::endl;
+      RecordColor = {};
+      RecordDepth = {};
+      filename_recording.clear();
+    }
 
     if (args->show_image) {
       if (args->color) {

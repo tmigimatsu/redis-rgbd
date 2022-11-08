@@ -14,6 +14,20 @@ if(NOT TARGET realsense2::realsense2)
         COMMAND sed -i "s/add_custom_target(uninstall/add_custom_target(realsense2_uninstall/" librealsense.git/CMake/install_config.cmake
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
+    set(REALSENSE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/librealsense.git")
+    message(${REALSENSE_SOURCE_DIR})
+    execute_process(
+        COMMAND sed -i "s/CMAKE_SOURCE_DIR/REALSENSE_SOURCE_DIR/" librealsense.git/src/gl/CMakeLists.txt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    execute_process(
+        COMMAND sed -i "s/CMAKE_SOURCE_DIR/REALSENSE_SOURCE_DIR/" librealsense.git/examples/CMakeLists.txt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    execute_process(
+        COMMAND sed -i "s/CMAKE_SOURCE_DIR/REALSENSE_SOURCE_DIR/" librealsense.git/tools/CMakeLists.txt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
     # Disable realsense examples. This flag is an option that must be set globally.
     option(BUILD_EXAMPLES "Build realsense examples." OFF)
     add_subdirectory(librealsense.git)
